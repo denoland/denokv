@@ -1,0 +1,19 @@
+[package]
+name = "deno_kv_proto"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+num-bigint.workspace = true
+prost.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true

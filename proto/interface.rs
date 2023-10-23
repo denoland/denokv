@@ -1,10 +1,16 @@
 // Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::num::NonZeroU32;
 
 use async_trait::async_trait;
+use chrono::DateTime;
+use chrono::Utc;
 use num_bigint::BigInt;
+use serde::Deserialize;
+use serde::Serialize;
+use uuid::Uuid;
 
 use crate::codec::canonicalize_f64;
 
@@ -234,7 +240,7 @@ pub struct KvCheck {
 pub struct KvMutation {
   pub key: Vec<u8>,
   pub kind: MutationKind,
-  pub expire_at: Option<u64>,
+  pub expire_at: Option<DateTime<Utc>>,
 }
 
 /// A request to enqueue a message to the database. This message is delivered
@@ -252,7 +258,7 @@ pub struct KvMutation {
 /// keys specified in `keys_if_undelivered`.
 pub struct Enqueue {
   pub payload: Vec<u8>,
-  pub delay_ms: u64,
+  pub deadline: DateTime<Utc>,
   pub keys_if_undelivered: Vec<Vec<u8>>,
   pub backoff_schedule: Option<Vec<u32>>,
 }
@@ -322,4 +328,70 @@ impl MutationKind {
 pub struct CommitResult {
   /// The new versionstamp of the data that was committed.
   pub versionstamp: Versionstamp,
+}
+
+/// The database metadata that is returned by the KV Connect metadata endpoint.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+pub struct DatabaseMetadata {
+  pub version: u64,
+  pub database_id: Uuid,
+  pub endpoints: Vec<EndpointInfo>,
+  pub token: Cow<'static, str>,
+  pub expires_at: DateTime<Utc>,
+}
+
+/// An endpoint that can be used to connect to the database.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointInfo {
+  pub url: Cow<'static, str>,
+
+  // Using `String` instead of an enum, so that parsing doesn't
+  // break if more consistency levels are added.
+  pub consistency: Cow<'static, str>,
+}
+
+pub const VALUE_ENCODING_V8: i64 = 1;
+pub const VALUE_ENCODING_LE64: i64 = 2;
+pub const VALUE_ENCODING_BYTES: i64 = 3;
+
+/// Decode a value, returning None if the encoding is not understood.
+pub fn decode_value(value: Vec<u8>, encoding: i64) -> Option<Value> {
+  let value = match encoding {
+    VALUE_ENCODING_V8 => Value::V8(value),
+    VALUE_ENCODING_BYTES => Value::Bytes(value),
+    VALUE_ENCODING_LE64 => {
+      let mut buf = [0; 8];
+      buf.copy_from_slice(&value);
+      Value::U64(u64::from_le_bytes(buf))
+    }
+    _ => return None,
+  };
+  Some(value)
+}
+
+pub fn encode_value(value: &Value) -> (Cow<'_, [u8]>, i64) {
+  match value {
+    Value::V8(value) => (Cow::Borrowed(value), VALUE_ENCODING_V8),
+    Value::Bytes(value) => (Cow::Borrowed(value), VALUE_ENCODING_BYTES),
+    Value::U64(value) => {
+      let mut buf = [0; 8];
+      buf.copy_from_slice(&value.to_le_bytes());
+      (Cow::Owned(buf.to_vec()), VALUE_ENCODING_LE64)
+    }
+  }
+}
+
+pub fn encode_value_owned(value: Value) -> (Vec<u8>, i64) {
+  match value {
+    Value::V8(value) => (value, VALUE_ENCODING_V8),
+    Value::Bytes(value) => (value, VALUE_ENCODING_BYTES),
+    Value::U64(value) => {
+      let mut buf = [0; 8];
+      buf.copy_from_slice(&value.to_le_bytes());
+      (buf.to_vec(), VALUE_ENCODING_LE64)
+    }
+  }
 }

@@ -12,8 +12,11 @@ path = "lib.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 num-bigint.workspace = true
 prost.workspace = true
+serde.workspace = true
+uuid.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true

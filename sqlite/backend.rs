@@ -1,10 +1,13 @@
-use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
+use anyhow::anyhow;
+use chrono::DateTime;
+use chrono::Utc;
+use deno_kv_proto::decode_value;
+use deno_kv_proto::encode_value;
+use deno_kv_proto::encode_value_owned;
 use deno_kv_proto::AtomicWrite;
 use deno_kv_proto::CommitResult;
 use deno_kv_proto::KvEntry;
@@ -13,6 +16,7 @@ use deno_kv_proto::ReadRange;
 use deno_kv_proto::ReadRangeOutput;
 use deno_kv_proto::SnapshotReadOptions;
 use deno_kv_proto::Value;
+use deno_kv_proto::VALUE_ENCODING_V8;
 use rand::Rng;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
@@ -20,7 +24,7 @@ use rusqlite::Transaction;
 use uuid::Uuid;
 
 const STATEMENT_INC_AND_GET_DATA_VERSION: &str =
-  "update data_version set version = version + 1 where k = 0 returning version";
+  "update data_version set version = version + ? where k = 0 returning version";
 const STATEMENT_KV_RANGE_SCAN: &str =
   "select k, v, v_encoding, version from kv where k >= ? and k < ? order by k asc limit ?";
 const STATEMENT_KV_RANGE_SCAN_REVERSE: &str =
@@ -200,29 +204,28 @@ impl SqliteBackend {
         } else {
           STATEMENT_KV_RANGE_SCAN
         })?;
-        let entries = stmt
-          .query_map(
-            (
-              request.start.as_slice(),
-              request.end.as_slice(),
-              request.limit.get(),
-            ),
-            |row| {
-              let key: Vec<u8> = row.get(0)?;
-              let value: Vec<u8> = row.get(1)?;
-              let encoding: i64 = row.get(2)?;
-
-              let value = decode_value(value, encoding);
-
-              let version: i64 = row.get(3)?;
-              Ok(KvEntry {
-                key,
-                value,
-                versionstamp: version_to_versionstamp(version),
-              })
-            },
-          )?
-          .collect::<Result<Vec<_>, rusqlite::Error>>()?;
+        let mut rows = stmt.query((
+          request.start.as_slice(),
+          request.end.as_slice(),
+          request.limit.get(),
+        ))?;
+        let mut entries = vec![];
+        loop {
+          let Some(row) = rows.next()? else {
+            break
+          };
+          let key: Vec<u8> = row.get(0)?;
+          let value: Vec<u8> = row.get(1)?;
+          let encoding: i64 = row.get(2)?;
+          let value = decode_value(value, encoding)
+            .ok_or_else(|| anyhow!("unknown value encoding {encoding}"))?;
+          let version: i64 = row.get(3)?;
+          entries.push(KvEntry {
+            key,
+            value,
+            versionstamp: version_to_versionstamp(version),
+          });
+        }
         responses.push(ReadRangeOutput { entries });
       }
 
@@ -246,9 +249,10 @@ impl SqliteBackend {
         }
       }
 
+      let incrementer_count = rand::thread_rng().gen_range(1..10);
       let version: i64 = tx
         .prepare_cached(STATEMENT_INC_AND_GET_DATA_VERSION)?
-        .query_row([], |row| row.get(0))?;
+        .query_row([incrementer_count], |row| row.get(0))?;
 
       for mutation in &write.mutations {
         match &mutation.kind {
@@ -262,7 +266,7 @@ impl SqliteBackend {
                 &version,
                 mutation
                   .expire_at
-                  .and_then(|x| i64::try_from(x).ok())
+                  .map(|time| time.timestamp_millis())
                   .unwrap_or(-1i64)
               ])?;
             assert_eq!(changed, 1)
@@ -306,11 +310,6 @@ impl SqliteBackend {
         }
       }
 
-      let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-
       let has_enqueues = !write.enqueues.is_empty();
       for enqueue in &write.enqueues {
         let id = Uuid::new_v4().to_string();
@@ -326,7 +325,7 @@ impl SqliteBackend {
         let changed =
           tx.prepare_cached(STATEMENT_QUEUE_ADD_READY)?
             .execute(params![
-              now + enqueue.delay_ms,
+              enqueue.deadline.timestamp_millis() as u64,
               id,
               &enqueue.payload,
               &backoff_schedule,
@@ -354,16 +353,13 @@ impl SqliteBackend {
 
   pub fn queue_running_keepalive(&mut self) -> Result<(), anyhow::Error> {
     let running_messages = self.messages_running.clone();
-    let now = SystemTime::now()
-      .duration_since(SystemTime::UNIX_EPOCH)
-      .unwrap()
-      .as_millis() as u64;
+    let now = Utc::now();
     self.run_tx(|tx| {
       for id in &running_messages {
         let changed = tx
           .prepare_cached(STATEMENT_QUEUE_UPDATE_RUNNING_DEADLINE)?
           .execute(params![
-            now + MESSAGE_DEADLINE_TIMEOUT.as_millis() as u64,
+            (now + MESSAGE_DEADLINE_TIMEOUT).timestamp_millis() as u64,
             &id.0
           ])?;
         assert!(changed <= 1);
@@ -374,19 +370,19 @@ impl SqliteBackend {
   }
 
   pub fn queue_cleanup(&mut self) -> Result<(), anyhow::Error> {
-    let now = UNIX_EPOCH.elapsed().unwrap().as_millis() as u64;
+    let now = Utc::now();
     let queue_dequeue_waker = self.dequeue_notify.clone();
     loop {
       let done = self.run_tx(|tx| {
         let entries = tx
           .prepare_cached(STATEMENT_QUEUE_GET_RUNNING_PAST_DEADLINE)?
-          .query_map([now], |row| {
+          .query_map([now.timestamp_millis()], |row| {
             let id: String = row.get(0)?;
             Ok(id)
           })?
           .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         for id in &entries {
-          if requeue_message(tx, id)? {
+          if requeue_message(tx, id, now)? {
             queue_dequeue_waker.notify_one();
           }
         }
@@ -401,8 +397,9 @@ impl SqliteBackend {
 
   pub fn queue_dequeue_message(
     &mut self,
-  ) -> Result<(Option<DequeuedMessage>, Option<SystemTime>), anyhow::Error> {
-    let now = UNIX_EPOCH.elapsed().unwrap().as_millis() as u64;
+  ) -> Result<(Option<DequeuedMessage>, Option<DateTime<Utc>>), anyhow::Error>
+  {
+    let now = Utc::now();
 
     let can_dispatch = self.messages_running.len() < DISPATCH_CONCURRENCY_LIMIT;
 
@@ -411,7 +408,7 @@ impl SqliteBackend {
         .then(|| {
           let message = tx
             .prepare_cached(STATEMENT_QUEUE_GET_NEXT_READY)?
-            .query_row([now], |row| {
+            .query_row([now.timestamp_millis() as u64], |row| {
               let ts: u64 = row.get(0)?;
               let id: String = row.get(1)?;
               let data: Vec<u8> = row.get(2)?;
@@ -460,7 +457,7 @@ impl SqliteBackend {
         })
         .optional()?;
       let next_ready =
-        next_ready_ts.map(|x| UNIX_EPOCH + Duration::from_millis(x));
+        next_ready_ts.map(|x| DateTime::UNIX_EPOCH + Duration::from_millis(x));
 
       Ok((message, next_ready))
     })
@@ -468,7 +465,7 @@ impl SqliteBackend {
 
   pub fn queue_next_ready(
     &mut self,
-  ) -> Result<Option<SystemTime>, anyhow::Error> {
+  ) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
     self.run_tx(|tx| {
       let next_ready_ts = tx
         .prepare_cached(STATEMENT_QUEUE_GET_EARLIEST_READY)?
@@ -478,7 +475,7 @@ impl SqliteBackend {
         })
         .optional()?;
       let next_ready =
-        next_ready_ts.map(|x| UNIX_EPOCH + Duration::from_millis(x));
+        next_ready_ts.map(|x| DateTime::UNIX_EPOCH + Duration::from_millis(x));
 
       Ok(next_ready)
     })
@@ -489,6 +486,7 @@ impl SqliteBackend {
     id: &QueueMessageId,
     success: bool,
   ) -> Result<(), anyhow::Error> {
+    let now = Utc::now();
     let requeued = self.run_tx(|tx| {
       let requeued = if success {
         let changed = tx
@@ -497,7 +495,7 @@ impl SqliteBackend {
         assert!(changed <= 1);
         false
       } else {
-        requeue_message(tx, &id.0)?
+        requeue_message(tx, &id.0, now)?
       };
       Ok(requeued)
     })?;
@@ -509,14 +507,11 @@ impl SqliteBackend {
 
   pub fn collect_expired(
     &mut self,
-  ) -> Result<Option<SystemTime>, anyhow::Error> {
-    let now = SystemTime::now()
-      .duration_since(SystemTime::UNIX_EPOCH)
-      .unwrap()
-      .as_millis() as u64;
+  ) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
+    let now = Utc::now();
     self.run_tx(|tx| {
       tx.prepare_cached(STATEMENT_DELETE_ALL_EXPIRED)?
-        .execute(params![now])?;
+        .execute(params![now.timestamp_millis()])?;
       let earliest_expiration_ms: Option<u64> = tx
         .prepare_cached(STATEMENT_EARLIEST_EXPIRATION)?
         .query_row(params![], |row| {
@@ -524,7 +519,10 @@ impl SqliteBackend {
           Ok(expiration_ms)
         })
         .optional()?;
-      Ok(earliest_expiration_ms.map(|x| UNIX_EPOCH + Duration::from_millis(x)))
+      Ok(
+        earliest_expiration_ms
+          .map(|x| DateTime::UNIX_EPOCH + Duration::from_millis(x)),
+      )
     })
   }
 }
@@ -532,6 +530,7 @@ impl SqliteBackend {
 fn requeue_message(
   tx: &mut Transaction,
   id: &str,
+  now: DateTime<Utc>,
 ) -> Result<bool, anyhow::Error> {
   let maybe_message = tx
     .prepare_cached(STATEMENT_QUEUE_GET_RUNNING_BY_ID)?
@@ -557,16 +556,12 @@ fn requeue_message(
   let mut requeued = false;
   if !backoff_schedule.is_empty() {
     // Requeue based on backoff schedule
-    let now = SystemTime::now()
-      .duration_since(SystemTime::UNIX_EPOCH)
-      .unwrap()
-      .as_millis() as u64;
-    let new_ts = now + backoff_schedule[0];
+    let new_ts = now + Duration::from_millis(backoff_schedule[0]);
     let new_backoff_schedule = serde_json::to_string(&backoff_schedule[1..])?;
     let changed = tx
       .prepare_cached(STATEMENT_QUEUE_ADD_READY)?
       .execute(params![
-        new_ts,
+        new_ts.timestamp_millis(),
         id,
         &data,
         &new_backoff_schedule,
@@ -580,9 +575,10 @@ fn requeue_message(
     let keys_if_undelivered =
       serde_json::from_str::<Vec<Vec<u8>>>(&keys_if_undelivered)?;
 
+    let incrementer_count = rand::thread_rng().gen_range(1..10);
     let version: i64 = tx
       .prepare_cached(STATEMENT_INC_AND_GET_DATA_VERSION)?
-      .query_row([], |row| row.get(0))?;
+      .query_row([incrementer_count], |row| row.get(0))?;
 
     for key in keys_if_undelivered {
       let changed = tx
@@ -652,20 +648,25 @@ fn mutate_le64(
     .query_row([key], |row| {
       let value: Vec<u8> = row.get(0)?;
       let encoding: i64 = row.get(1)?;
-
-      let value = decode_value(value, encoding);
-      Ok(value)
+      Ok((value, encoding))
     })
     .optional()?;
 
+  let old_value = match old_value {
+    Some((value, encoding)) => Some(
+      decode_value(value, encoding)
+        .ok_or_else(|| anyhow!("unknown value encoding {encoding}"))?,
+    ),
+    None => None,
+  };
+
   let new_value = match old_value {
-    Some(Value::U64(old_value) ) => mutate(old_value, operand),
+    Some(Value::U64(old_value)) => mutate(old_value, operand),
     Some(_) => return Err(TypeError(format!("Failed to perform '{op_name}' mutation on a non-U64 value in the database")).into()),
     None => operand,
   };
 
-  let new_value = Value::U64(new_value);
-  let (new_value, encoding) = encode_value(&new_value);
+  let (new_value, encoding) = encode_value_owned(Value::U64(new_value));
 
   let changed = tx.prepare_cached(STATEMENT_KV_POINT_SET)?.execute(params![
     key,
@@ -683,33 +684,4 @@ fn version_to_versionstamp(version: i64) -> [u8; 10] {
   let mut versionstamp = [0; 10];
   versionstamp[..8].copy_from_slice(&version.to_be_bytes());
   versionstamp
-}
-
-const VALUE_ENCODING_V8: i64 = 1;
-const VALUE_ENCODING_LE64: i64 = 2;
-const VALUE_ENCODING_BYTES: i64 = 3;
-
-fn decode_value(value: Vec<u8>, encoding: i64) -> Value {
-  match encoding {
-    VALUE_ENCODING_V8 => Value::V8(value),
-    VALUE_ENCODING_BYTES => Value::Bytes(value),
-    VALUE_ENCODING_LE64 => {
-      let mut buf = [0; 8];
-      buf.copy_from_slice(&value);
-      Value::U64(u64::from_le_bytes(buf))
-    }
-    _ => todo!(),
-  }
-}
-
-fn encode_value(value: &Value) -> (Cow<'_, [u8]>, i64) {
-  match value {
-    Value::V8(value) => (Cow::Borrowed(value), VALUE_ENCODING_V8),
-    Value::Bytes(value) => (Cow::Borrowed(value), VALUE_ENCODING_BYTES),
-    Value::U64(value) => {
-      let mut buf = [0; 8];
-      buf.copy_from_slice(&value.to_le_bytes());
-      (Cow::Owned(buf.to_vec()), VALUE_ENCODING_LE64)
-    }
-  }
 }

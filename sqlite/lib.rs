@@ -1,18 +1,19 @@
 mod backend;
 
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ops::Add;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread::JoinHandle;
 use std::time::Duration;
-use std::time::SystemTime;
 
 pub use crate::backend::sqlite_retry_loop;
 use crate::backend::DequeuedMessage;
 use crate::backend::QueueMessageId;
 use crate::backend::SqliteBackend;
 pub use crate::backend::TypeError;
+use chrono::DateTime;
+use chrono::Utc;
 use deno_kv_proto::AtomicWrite;
 use deno_kv_proto::CommitResult;
 use deno_kv_proto::Database;
@@ -21,6 +22,7 @@ use deno_kv_proto::ReadRange;
 use deno_kv_proto::ReadRangeOutput;
 use deno_kv_proto::SnapshotReadOptions;
 use futures::future::Either;
+pub use rusqlite::Connection;
 use tokio::select;
 use tokio::sync::oneshot;
 use tokio::sync::Notify;
@@ -62,8 +64,9 @@ enum SqliteRequest {
   },
 }
 
+#[derive(Clone)]
 pub struct Sqlite {
-  join_handle: RefCell<Option<JoinHandle<()>>>,
+  join_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
   shutdown_notify: Arc<Notify>,
   request_tx: tokio::sync::mpsc::Sender<SqliteRequest>,
 }
@@ -90,7 +93,7 @@ impl Sqlite {
         ));
     });
     Ok(Self {
-      join_handle: RefCell::new(Some(join_handle)),
+      join_handle: Arc::new(Mutex::new(Some(join_handle))),
       shutdown_notify,
       request_tx,
     })
@@ -103,12 +106,12 @@ async fn sqlite_thread(
   dequeue_notify: Arc<Notify>,
   mut request_rx: tokio::sync::mpsc::Receiver<SqliteRequest>,
 ) {
+  let start = Utc::now();
   if let Err(err) = backend.queue_cleanup() {
     panic!("KV queue cleanup failed: {err}");
   }
   let mut dequeue_channels: VecDeque<oneshot::Sender<DequeuedMessage>> =
     VecDeque::with_capacity(4);
-  let now = SystemTime::now();
   let queue_next_ready = match backend.queue_next_ready() {
     Ok(queue_next_ready) => queue_next_ready,
     Err(err) => panic!("KV queue_next_ready failed: {err}"),
@@ -119,9 +122,9 @@ async fn sqlite_thread(
     QUEUE_DEQUEUE_JITTER,
   );
   let mut queue_cleanup_deadline =
-    now.add(duration_with_jitter(QUEUE_RUNNING_CLEANUP_INTERVAL));
+    start + duration_with_jitter(QUEUE_RUNNING_CLEANUP_INTERVAL);
   let mut queue_keepalive_deadline =
-    now.add(duration_with_jitter(QUEUE_MESSAGE_DEADLINE_UPDATE_INTERVAL));
+    start + duration_with_jitter(QUEUE_MESSAGE_DEADLINE_UPDATE_INTERVAL);
   let expiry_next_ready = match backend.collect_expired() {
     Ok(expiry_next_ready) => expiry_next_ready,
     Err(err) => panic!("KV collect expired failed: {err}"),
@@ -132,7 +135,7 @@ async fn sqlite_thread(
     EXPIRY_JITTER,
   );
   loop {
-    let now = SystemTime::now();
+    let now = Utc::now();
     let mut closest_deadline = queue_cleanup_deadline
       .min(queue_keepalive_deadline)
       .min(expiry_deadline);
@@ -140,7 +143,7 @@ async fn sqlite_thread(
       closest_deadline = closest_deadline.min(queue_dequeue_deadline);
     }
     let timer = if let Ok(time_to_closest_deadline) =
-      closest_deadline.duration_since(now)
+      closest_deadline.signed_duration_since(now).to_std()
     {
       Either::Left(tokio::time::sleep(time_to_closest_deadline))
     } else {
@@ -235,20 +238,17 @@ fn duration_with_total_jitter(duration: Duration) -> std::time::Duration {
 }
 
 fn compute_deadline_with_max_and_jitter(
-  next_ready: Option<SystemTime>,
+  next_ready: Option<DateTime<Utc>>,
   max: Duration,
   jitter_duration: Duration,
-) -> SystemTime {
-  let fallback = SystemTime::now().add(max);
+) -> DateTime<Utc> {
+  let fallback = Utc::now() + max;
   next_ready.unwrap_or(fallback).min(fallback)
     + duration_with_total_jitter(jitter_duration)
 }
 
-#[async_trait::async_trait(?Send)]
-impl Database for Sqlite {
-  type QMH = SqliteMessageHandle;
-
-  async fn snapshot_read(
+impl Sqlite {
+  pub async fn snapshot_read(
     &self,
     requests: Vec<ReadRange>,
     options: SnapshotReadOptions,
@@ -268,7 +268,7 @@ impl Database for Sqlite {
       .map_err(|_| anyhow::anyhow!("Database is closed."))?
   }
 
-  async fn atomic_write(
+  pub async fn atomic_write(
     &self,
     write: AtomicWrite,
   ) -> Result<Option<CommitResult>, anyhow::Error> {
@@ -283,9 +283,9 @@ impl Database for Sqlite {
       .map_err(|_| anyhow::anyhow!("Database is closed."))?
   }
 
-  async fn dequeue_next_message(
+  pub async fn dequeue_next_message(
     &self,
-  ) -> Result<Option<Self::QMH>, anyhow::Error> {
+  ) -> Result<Option<SqliteMessageHandle>, anyhow::Error> {
     let (sender, receiver) = oneshot::channel();
     let req = SqliteRequest::QueueDequeueMessage { sender };
     if let Err(_) = self.request_tx.send(req).await {
@@ -301,15 +301,46 @@ impl Database for Sqlite {
     }))
   }
 
-  fn close(&self) {
+  pub fn close(&self) {
     self.shutdown_notify.notify_one();
     self
       .join_handle
-      .borrow_mut()
+      .lock()
+      .unwrap()
       .take()
       .expect("can't close database twice")
       .join()
       .unwrap();
+  }
+}
+
+#[async_trait::async_trait(?Send)]
+impl Database for Sqlite {
+  type QMH = SqliteMessageHandle;
+
+  async fn snapshot_read(
+    &self,
+    requests: Vec<ReadRange>,
+    options: SnapshotReadOptions,
+  ) -> Result<Vec<ReadRangeOutput>, anyhow::Error> {
+    Sqlite::snapshot_read(self, requests, options).await
+  }
+
+  async fn atomic_write(
+    &self,
+    write: AtomicWrite,
+  ) -> Result<Option<CommitResult>, anyhow::Error> {
+    Sqlite::atomic_write(self, write).await
+  }
+
+  async fn dequeue_next_message(
+    &self,
+  ) -> Result<Option<Self::QMH>, anyhow::Error> {
+    Sqlite::dequeue_next_message(self).await
+  }
+
+  fn close(&self) {
+    Sqlite::close(self);
   }
 }
 

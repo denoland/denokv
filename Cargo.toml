@@ -1,5 +1,5 @@
 [workspace]
-members = ["proto", "remote", "sqlite"]
+members = ["denokv", "proto", "remote", "sqlite"]
 resolver = "2"
 
 [workspace.package]
@@ -10,11 +10,16 @@ edition = "2021"
 
 [workspace.dependencies]
 denokv_proto = { version = "0.2.1", path = "./proto" }
+denokv_sqlite = { version = "0.2.1", path = "./sqlite" }
+denokv_remote = { version = "0.2.2", path = "./remote" }
 
 anyhow = "1"
 async-trait = "0.1"
+axum = { version = "0.6", features = ["macros", "http2"] }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+env_logger = "0.10.0"
 futures = "0.3.28"
 log = "0.4.20"
 num-bigint = "0.4"
@@ -22,9 +27,11 @@ prost = "0.11"
 prost-build = "0.11"
 rand = "0.8.5"
 reqwest = { version = "0.11", default-features = false, features = ["json"] }
-rusqlite = { version = "0.29.0" }
+rusqlite = "0.29.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.107"
+tempfile = "3"
+thiserror = "1"
 tokio = { version = "1.33.0", features = ["full"] }
 url = "2"
 uuid = { version = "1.4.1", features = ["v4", "serde"] }

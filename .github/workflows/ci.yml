@@ -48,3 +48,5 @@ jobs:
         run: |
           cargo publish -vv -p denokv_proto
           cargo publish -vv -p denokv_sqlite
+          cargo publish -vv -p denokv_remote
+          cargo publish -vv -p denokv

@@ -17,8 +17,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - name: Build
-        run: cargo build --verbose
 
       - name: Install Rust
         uses: dsherret/rust-toolchain-file@v1
@@ -27,7 +25,6 @@ jobs:
         uses: arduino/setup-protoc@v2
         with:
           version: "21.12"
-          repo-token: "${{ secrets.GITHUB_TOKEN }}"
 
       - name: Check formatting
         run: cargo fmt -- --check

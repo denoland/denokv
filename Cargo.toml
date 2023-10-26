@@ -9,6 +9,8 @@ authors = ["the Deno authors"]
 edition = "2021"
 
 [workspace.dependencies]
+denokv_proto = { version = "0.1.0", path = "./proto" }
+
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }

@@ -1,0 +1,24 @@
+[workspace]
+members = ["proto", "sqlite"]
+
+[workspace.package]
+license = "MIT"
+repository = "https://github.com/denoland/denokv"
+authors = ["the Deno authors"]
+edition = "2021"
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3.28"
+log = "0.4.20"
+num-bigint = "0.4"
+prost = "0.11"
+prost-build = "0.11"
+rand = "0.8.5"
+rusqlite = "0.29.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.107"
+tokio = { version = "1.33.0", features = ["full"] }
+uuid = { version = "1.4.1", features = ["v4", "serde"] }

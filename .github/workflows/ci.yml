@@ -40,7 +40,7 @@ jobs:
 
       - name: Publish
         if: |
-          contains(matrix.os, 'ubuntu') &&
+          runner.os == 'Linux' &&
           github.repository == 'denoland/denokv' &&
           startsWith(github.ref, 'refs/tags/')
         env:

@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["*"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: dsherret/rust-toolchain-file@v1
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          version: "21.12"
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Check linting
+        run: cargo clippy --all-targets --all-features -- -D clippy::all
+
+      - name: Build
+        run: cargo build --all-targets --all-features --tests -v
+
+      - name: Test
+        run: cargo test
+
+      - name: Publish
+        if: |
+          contains(matrix.os, 'ubuntu') &&
+          github.repository == 'denoland/denokv' &&
+          startsWith(github.ref, 'refs/tags/')
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo publish -vv -p denokv_proto
+          cargo publish -vv -p denokv_sqlite

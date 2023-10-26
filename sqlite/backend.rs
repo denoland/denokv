@@ -18,6 +18,7 @@ use deno_kv_proto::SnapshotReadOptions;
 use deno_kv_proto::Value;
 use deno_kv_proto::VALUE_ENCODING_V8;
 use rand::Rng;
+use rand::RngCore;
 use rusqlite::params;
 use rusqlite::OptionalExtension;
 use rusqlite::Transaction;
@@ -131,6 +132,7 @@ impl std::error::Error for TypeError {}
 
 pub struct SqliteBackend {
   conn: rusqlite::Connection,
+  rng: Box<dyn RngCore + Send>,
   pub dequeue_notify: Arc<tokio::sync::Notify>,
   pub messages_running: HashSet<QueueMessageId>,
 }
@@ -138,11 +140,14 @@ pub struct SqliteBackend {
 impl SqliteBackend {
   fn run_tx<F, R>(&mut self, mut f: F) -> Result<R, anyhow::Error>
   where
-    F: FnMut(&mut rusqlite::Transaction) -> Result<R, anyhow::Error>,
+    F: FnMut(
+      &mut rusqlite::Transaction,
+      &mut dyn RngCore,
+    ) -> Result<R, anyhow::Error>,
   {
     sqlite_retry_loop(move || {
       let mut tx = self.conn.transaction()?;
-      let result = f(&mut tx);
+      let result = f(&mut tx, &mut self.rng);
       if result.is_ok() {
         tx.commit()?;
       }
@@ -153,16 +158,18 @@ impl SqliteBackend {
   pub fn new(
     conn: rusqlite::Connection,
     dequeue_notify: Arc<tokio::sync::Notify>,
+    rng: Box<dyn RngCore + Send>,
   ) -> Result<Self, anyhow::Error> {
     conn.pragma_update(None, "journal_mode", "wal")?;
 
     let mut this = Self {
       conn,
+      rng,
       dequeue_notify,
       messages_running: HashSet::new(),
     };
 
-    this.run_tx(|tx| {
+    this.run_tx(|tx, _| {
       tx.execute(STATEMENT_CREATE_MIGRATION_TABLE, [])?;
 
       let current_version: usize = tx
@@ -196,7 +203,7 @@ impl SqliteBackend {
     requests: Vec<ReadRange>,
     _options: SnapshotReadOptions,
   ) -> Result<Vec<ReadRangeOutput>, anyhow::Error> {
-    self.run_tx(|tx| {
+    self.run_tx(|tx, _| {
       let mut responses = Vec::with_capacity(requests.len());
       for request in &*requests {
         let mut stmt = tx.prepare_cached(if request.reverse {
@@ -211,9 +218,7 @@ impl SqliteBackend {
         ))?;
         let mut entries = vec![];
         loop {
-          let Some(row) = rows.next()? else {
-            break
-          };
+          let Some(row) = rows.next()? else { break };
           let key: Vec<u8> = row.get(0)?;
           let value: Vec<u8> = row.get(1)?;
           let encoding: i64 = row.get(2)?;
@@ -237,7 +242,7 @@ impl SqliteBackend {
     &mut self,
     write: AtomicWrite,
   ) -> Result<Option<CommitResult>, anyhow::Error> {
-    let (has_enqueues, commit_result) = self.run_tx(|tx| {
+    let (has_enqueues, commit_result) = self.run_tx(|tx, rng| {
       for check in &write.checks {
         let real_versionstamp = tx
           .prepare_cached(STATEMENT_KV_POINT_GET_VERSION_ONLY)?
@@ -249,7 +254,7 @@ impl SqliteBackend {
         }
       }
 
-      let incrementer_count = rand::thread_rng().gen_range(1..10);
+      let incrementer_count = rng.gen_range(1..10);
       let version: i64 = tx
         .prepare_cached(STATEMENT_INC_AND_GET_DATA_VERSION)?
         .query_row([incrementer_count], |row| row.get(0))?;
@@ -354,14 +359,14 @@ impl SqliteBackend {
   pub fn queue_running_keepalive(&mut self) -> Result<(), anyhow::Error> {
     let running_messages = self.messages_running.clone();
     let now = Utc::now();
-    self.run_tx(|tx| {
+    self.run_tx(|tx, _| {
+      let mut update_deadline_stmt =
+        tx.prepare_cached(STATEMENT_QUEUE_UPDATE_RUNNING_DEADLINE)?;
       for id in &running_messages {
-        let changed = tx
-          .prepare_cached(STATEMENT_QUEUE_UPDATE_RUNNING_DEADLINE)?
-          .execute(params![
-            (now + MESSAGE_DEADLINE_TIMEOUT).timestamp_millis() as u64,
-            &id.0
-          ])?;
+        let changed = update_deadline_stmt.execute(params![
+          (now + MESSAGE_DEADLINE_TIMEOUT).timestamp_millis() as u64,
+          &id.0
+        ])?;
         assert!(changed <= 1);
       }
       Ok(())
@@ -373,7 +378,7 @@ impl SqliteBackend {
     let now = Utc::now();
     let queue_dequeue_waker = self.dequeue_notify.clone();
     loop {
-      let done = self.run_tx(|tx| {
+      let done = self.run_tx(|tx, rng| {
         let entries = tx
           .prepare_cached(STATEMENT_QUEUE_GET_RUNNING_PAST_DEADLINE)?
           .query_map([now.timestamp_millis()], |row| {
@@ -382,7 +387,7 @@ impl SqliteBackend {
           })?
           .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         for id in &entries {
-          if requeue_message(tx, id, now)? {
+          if requeue_message(rng, tx, id, now)? {
             queue_dequeue_waker.notify_one();
           }
         }
@@ -403,7 +408,7 @@ impl SqliteBackend {
 
     let can_dispatch = self.messages_running.len() < DISPATCH_CONCURRENCY_LIMIT;
 
-    self.run_tx(|tx| {
+    self.run_tx(|tx, _| {
       let message = can_dispatch
         .then(|| {
           let message = tx
@@ -466,7 +471,7 @@ impl SqliteBackend {
   pub fn queue_next_ready(
     &mut self,
   ) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
-    self.run_tx(|tx| {
+    self.run_tx(|tx, _| {
       let next_ready_ts = tx
         .prepare_cached(STATEMENT_QUEUE_GET_EARLIEST_READY)?
         .query_row([], |row| {
@@ -487,7 +492,7 @@ impl SqliteBackend {
     success: bool,
   ) -> Result<(), anyhow::Error> {
     let now = Utc::now();
-    let requeued = self.run_tx(|tx| {
+    let requeued = self.run_tx(|tx, rng| {
       let requeued = if success {
         let changed = tx
           .prepare_cached(STATEMENT_QUEUE_REMOVE_RUNNING)?
@@ -495,7 +500,7 @@ impl SqliteBackend {
         assert!(changed <= 1);
         false
       } else {
-        requeue_message(tx, &id.0, now)?
+        requeue_message(rng, tx, &id.0, now)?
       };
       Ok(requeued)
     })?;
@@ -509,7 +514,7 @@ impl SqliteBackend {
     &mut self,
   ) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
     let now = Utc::now();
-    self.run_tx(|tx| {
+    self.run_tx(|tx, _| {
       tx.prepare_cached(STATEMENT_DELETE_ALL_EXPIRED)?
         .execute(params![now.timestamp_millis()])?;
       let earliest_expiration_ms: Option<u64> = tx
@@ -528,6 +533,7 @@ impl SqliteBackend {
 }
 
 fn requeue_message(
+  rng: &mut dyn RngCore,
   tx: &mut Transaction,
   id: &str,
   now: DateTime<Utc>,
@@ -543,7 +549,9 @@ fn requeue_message(
       Ok((deadline, id, data, backoff_schedule, keys_if_undelivered))
     })
     .optional()?;
-  let Some((_, id, data, backoff_schedule, keys_if_undelivered)) = maybe_message else {
+  let Some((_, id, data, backoff_schedule, keys_if_undelivered)) =
+    maybe_message
+  else {
     return Ok(false);
   };
 
@@ -575,7 +583,7 @@ fn requeue_message(
     let keys_if_undelivered =
       serde_json::from_str::<Vec<Vec<u8>>>(&keys_if_undelivered)?;
 
-    let incrementer_count = rand::thread_rng().gen_range(1..10);
+    let incrementer_count = rng.gen_range(1..10);
     let version: i64 = tx
       .prepare_cached(STATEMENT_INC_AND_GET_DATA_VERSION)?
       .query_row([incrementer_count], |row| row.get(0))?;
@@ -638,9 +646,12 @@ fn mutate_le64(
   mutate: impl FnOnce(u64, u64) -> u64,
 ) -> Result<(), anyhow::Error> {
   let Value::U64(operand) = *operand else {
-    return Err(TypeError(format!(
-      "Failed to perform '{op_name}' mutation on a non-U64 operand"
-    )).into());
+    return Err(
+      TypeError(format!(
+        "Failed to perform '{op_name}' mutation on a non-U64 operand"
+      ))
+      .into(),
+    );
   };
 
   let old_value = tx

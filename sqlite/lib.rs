@@ -22,6 +22,7 @@ use deno_kv_proto::ReadRange;
 use deno_kv_proto::ReadRangeOutput;
 use deno_kv_proto::SnapshotReadOptions;
 use futures::future::Either;
+use rand::RngCore;
 pub use rusqlite::Connection;
 use tokio::select;
 use tokio::sync::oneshot;
@@ -75,8 +76,10 @@ impl Sqlite {
   pub fn new(
     conn: rusqlite::Connection,
     dequeue_notify: Arc<Notify>,
+    versionstamp_rng: Box<dyn RngCore + Send>,
   ) -> Result<Sqlite, anyhow::Error> {
-    let backend = SqliteBackend::new(conn, dequeue_notify.clone())?;
+    let backend =
+      SqliteBackend::new(conn, dequeue_notify.clone(), versionstamp_rng)?;
     let shutdown_notify = Arc::new(Notify::new());
     let (request_tx, request_rx) = tokio::sync::mpsc::channel(1);
     let shutdown_notify_ = shutdown_notify.clone();

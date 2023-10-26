@@ -291,7 +291,7 @@ impl Sqlite {
   ) -> Result<Option<SqliteMessageHandle>, anyhow::Error> {
     let (sender, receiver) = oneshot::channel();
     let req = SqliteRequest::QueueDequeueMessage { sender };
-    if let Err(_) = self.request_tx.send(req).await {
+    if self.request_tx.send(req).await.is_err() {
       return Ok(None);
     }
     let Ok(dequeued_message) = receiver.await else {

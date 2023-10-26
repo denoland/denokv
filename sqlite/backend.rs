@@ -283,34 +283,19 @@ impl SqliteBackend {
             assert!(changed == 0 || changed == 1)
           }
           MutationKind::Sum(operand) => {
-            mutate_le64(
-              &tx,
-              &mutation.key,
-              "sum",
-              operand,
-              version,
-              |a, b| a.wrapping_add(b),
-            )?;
+            mutate_le64(tx, &mutation.key, "sum", operand, version, |a, b| {
+              a.wrapping_add(b)
+            })?;
           }
           MutationKind::Min(operand) => {
-            mutate_le64(
-              &tx,
-              &mutation.key,
-              "min",
-              operand,
-              version,
-              |a, b| a.min(b),
-            )?;
+            mutate_le64(tx, &mutation.key, "min", operand, version, |a, b| {
+              a.min(b)
+            })?;
           }
           MutationKind::Max(operand) => {
-            mutate_le64(
-              &tx,
-              &mutation.key,
-              "max",
-              operand,
-              version,
-              |a, b| a.max(b),
-            )?;
+            mutate_le64(tx, &mutation.key, "max", operand, version, |a, b| {
+              a.max(b)
+            })?;
           }
         }
       }

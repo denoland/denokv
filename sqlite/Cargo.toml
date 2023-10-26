@@ -9,6 +9,10 @@ authors.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+default = ["bundled"]
+bundled = ["rusqlite/bundled"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

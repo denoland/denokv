@@ -33,7 +33,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D clippy::all
 
       - name: Build
-        run: cargo build -v
+        run: cargo build --all-targets --all-features --tests -v
 
       - name: Test
-        run: cargo test -v
+        run: cargo test

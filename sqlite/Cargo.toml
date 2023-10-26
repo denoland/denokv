@@ -1,5 +1,5 @@
 [package]
-name = "deno_kv_sqlite"
+name = "denokv_sqlite"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ bundled = ["rusqlite/bundled"]
 anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
-deno_kv_proto = { path = "../proto" }
+denokv_proto = { path = "../proto" }
 futures.workspace = true
 log.workspace = true
 num-bigint.workspace = true

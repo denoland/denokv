@@ -157,7 +157,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e496a50fda8aacccc86d7529e2c1e0892dbd0f898a6b5645b5561b89c3210efa"
 
 [[package]]
-name = "deno_kv_proto"
+name = "denokv_proto"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -171,13 +171,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "deno_kv_sqlite"
+name = "denokv_sqlite"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "deno_kv_proto",
+ "denokv_proto",
  "futures",
  "log",
  "num-bigint",

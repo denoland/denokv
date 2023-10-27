@@ -1,0 +1,69 @@
+{
+  "$id": "https://deno.land/x/deno/cli/schemas/kv-metadata-exchange-response.v2.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "Uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "DateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "EndpointInfo": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "A fully qualified URL, or a URL relative to the metadata URL. The path of the URL must not end with a slash.",
+          "type": "string",
+          "examples": [
+            "https://data.example.com/v1",
+            "/v1",
+            "./v1"
+          ]
+        },
+        "consistency": {
+          "description": "The consistency level of the endpoint.",
+          "type": "string",
+          "anyOf": [
+            {
+              "const": "strong"
+            },
+            {
+              "const": "eventual"
+            }
+          ]
+        }
+      },
+      "required": ["url", "consistency"],
+      "additionalProperties": false
+    },
+    "DatabaseMetadata": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "const": 2
+        },
+        "databaseId": {
+          "$ref": "#/definitions/Uuid"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/EndpointInfo"
+          }
+        },
+        "token": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "$ref": "#/definitions/DateTime"
+        }
+      },
+      "required": ["version", "databaseId", "endpoints", "token", "expiresAt"],
+      "additionalProperties": false
+    }
+  },
+  "$ref": "#/definitions/DatabaseMetadata"
+}

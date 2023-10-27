@@ -1,0 +1,167 @@
+// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
+
+syntax = "proto3";
+
+package com.deno.kv.datapath;
+
+// A request to read some data.
+message SnapshotRead {
+  // The key ranges to read.
+  repeated ReadRange ranges = 1;
+}
+
+// The response to a read request.
+//
+// The request is considered successful if the length of the ranges in the input
+// and output match.
+message SnapshotReadOutput {
+  reserved 3, 5;
+
+  // The read ranges. The ranges are in the same order as the read ranges in the
+  // request.
+  repeated ReadRangeOutput ranges = 1;
+  // The request failed because this region does not support reading data.
+  bool read_disabled = 2;
+  // Whether the read was strongly consistent.
+  bool read_is_strongly_consistent = 4;
+}
+
+// A key range to read. The range is inclusive of the start and exclusive of the
+// end.
+message ReadRange {
+  // The first key to read.
+  bytes start = 1;
+  // The key after the last key to read.
+  bytes end = 2;
+  // How many values to read. The backend may return fewer values than this if
+  // there are not enough values in the range.
+  int32 limit = 3;
+  // If true, the values are returned in reverse order (from end to start). This
+  // does not change inclusive/exclusive semantics.
+  bool reverse = 4;
+}
+
+// The response to a read range request.
+message ReadRangeOutput {
+  // The values read in the range. The values are in key order.
+  repeated KvEntry values = 1;
+}
+
+// A request to write some data.
+message AtomicWrite {
+  // The checks to perform before writing.
+  repeated Check checks = 1;
+  // The mutations to perform.
+  repeated Mutation mutations = 2;
+  // The enqueues to perform.
+  repeated Enqueue enqueues = 3;
+}
+
+message AtomicWriteOutput {
+  reserved 3;
+
+  // The status of the write.
+  AtomicWriteStatus status = 1;
+  // The versionstamp of the commit that wrote the data.
+  bytes versionstamp = 2;
+}
+
+// A mutation to perform.
+message Check {
+  // The key to check.
+  bytes key = 1;
+  // The expected versionstamp of the value. If the value does not have this
+  // versionstamp, the check fails.
+  bytes versionstamp = 2; // 10-byte raw versionstamp
+}
+
+// A mutation to perform.
+message Mutation {
+  // The key to mutate.
+  bytes key = 1;
+  // The mutation value. This is ignored for clear mutations.
+  KvValue value = 2;
+  // The type of mutation to perform.
+  MutationType mutation_type = 3;
+  // An expiry time for the value, in milliseconds since the Unix epoch (UTC).
+  // If this is set to 0, the value will never expire.
+  int64 expire_at_ms = 4;
+}
+
+message KvValue {
+  bytes data = 1;
+  ValueEncoding encoding = 2;
+}
+
+// A key-value entry.
+message KvEntry {
+  // The key.
+  bytes key = 1;
+  // The encoded value bytes.
+  bytes value = 2;
+  // The encoding of the value.
+  ValueEncoding encoding = 3;
+  // The versionstamp of the commit that last wrote this value.
+  bytes versionstamp = 4;
+}
+
+// The type of a mutation.
+enum MutationType {
+  // The mutation type is unspecified or unknown.
+  M_UNSPECIFIED = 0;
+  // Set the value.
+  M_SET = 1;
+  // Clear the value.
+  M_CLEAR = 2;
+  // Sum the stored value with the new value. Both values must be LE64 encoded.
+  M_SUM = 3;
+  // Min the stored value with the new value. Both values must be LE64 encoded.
+  M_MAX = 4;
+  // Max the stored value with the new value. Both values must be LE64 encoded.
+  M_MIN = 5;
+}
+
+// The encoding of a value.
+enum ValueEncoding {
+  // The encoding is unspecified or unknown.
+  VE_UNSPECIFIED = 0;
+  // The value is encoded using V8 ValueSerializer encoding.
+  VE_V8 = 1;
+  // The value is encoded using little-endian 64-bit integer encoding.
+  VE_LE64 = 2;
+  // The value is a literal byte array.
+  VE_BYTES = 3;
+}
+
+// The status of an atomic write.
+enum AtomicWriteStatus {
+  reserved 3, 4, 6;
+
+  // The write failed, but the exact status is unspecified or unknown. The
+  // request should not be retried.
+  AW_UNSPECIFIED = 0;
+  // The write succeeded.
+  AW_SUCCESS = 1;
+  // The write failed because a check failed.
+  AW_CHECK_FAILURE = 2;
+  // The write failed because the region is unable to serve writes right now.
+  AW_WRITE_DISABLED = 5;
+}
+
+// A request to enqueue a message.
+message Enqueue {
+  // The payload of the message, encoded as a V8 ValueSerializer value.
+  bytes payload = 1;
+  // The time at which the message should be delivered, in milliseconds since
+  // the Unix epoch (UTC). If the deadline is in the past, the message will be
+  // scheduled for delivered immediately.
+  int64 deadline_ms = 2;
+  // The keys to write the value to if the maximum number of re-deliveries
+  // according to the backoff schedule has been reached.
+  repeated bytes kv_keys_if_undelivered = 3;
+  // The backoff schedule to use if delivery fails. This is a list of delays in
+  // milliseconds. The first delay is the delay before the first retry, the
+  // second delay is the delay before the second retry, and so on. If the list
+  // is empty, the message will not be retried.
+  repeated uint32 backoff_schedule = 4;
+}

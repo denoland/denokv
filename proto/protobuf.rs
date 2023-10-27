@@ -3,5 +3,5 @@
 // Generated code, disable lints
 #[allow(clippy::all, non_snake_case)]
 pub mod datapath {
-  include!(concat!(env!("OUT_DIR"), "/datapath.rs"));
+  include!(concat!(env!("OUT_DIR"), "/com.deno.kv.datapath.rs"));
 }

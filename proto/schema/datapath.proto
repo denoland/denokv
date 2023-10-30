@@ -113,8 +113,8 @@ enum MutationType {
   M_UNSPECIFIED = 0;
   // Set the value.
   M_SET = 1;
-  // Clear the value.
-  M_CLEAR = 2;
+  // Delete the value.
+  M_DELETE = 2;
   // Sum the stored value with the new value. Both values must be LE64 encoded.
   M_SUM = 3;
   // Min the stored value with the new value. Both values must be LE64 encoded.

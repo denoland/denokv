@@ -1,5 +1,5 @@
 [workspace]
-members = ["proto", "sqlite"]
+members = ["proto", "remote", "sqlite"]
 resolver = "2"
 
 [workspace.package]
@@ -25,3 +25,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.107"
 tokio = { version = "1.33.0", features = ["full"] }
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
+url = "2"
+reqwest = { version = "0.11", features = ["json"] }
+bytes = "1"

@@ -21,6 +21,7 @@ use denokv_proto::ReadRange;
 use denokv_proto::ReadRangeOutput;
 use denokv_proto::SnapshotReadOptions;
 use log::error;
+use log::warn;
 use rand::Rng;
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -574,7 +575,8 @@ impl<P: RemotePermissions> Database for Remote<P> {
   async fn dequeue_next_message(
     &self,
   ) -> Result<Option<Self::QMH>, anyhow::Error> {
-    unimplemented!()
+    warn!("KV Connect does not support queues.");
+    std::future::pending().await
   }
 
   fn close(&self) {}

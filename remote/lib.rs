@@ -493,12 +493,12 @@ impl<P: RemotePermissions> Database for Remote<P> {
     for mutation in write.mutations {
       let expire_at_ms = mutation
         .expire_at
-        .and_then(|t| {
+        .map(|t| {
           let ts = t.timestamp_millis();
           if ts <= 0 {
-            Some(1)
+            1
           } else {
-            Some(ts)
+            ts
           }
         })
         .unwrap_or(0);

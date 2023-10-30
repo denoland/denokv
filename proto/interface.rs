@@ -171,7 +171,7 @@ type Versionstamp = [u8; 10];
 /// A key-value entry with a versionstamp.
 pub struct KvEntry {
   pub key: Vec<u8>,
-  pub value: Value,
+  pub value: KvValue,
   pub versionstamp: Versionstamp,
 }
 
@@ -194,7 +194,7 @@ pub struct KvEntry {
 ///
 /// - **Bytes**: an arbitrary byte array.
 /// - **U64**: a 64-bit unsigned integer.
-pub enum Value {
+pub enum KvValue {
   V8(Vec<u8>),
   Bytes(Vec<u8>),
   U64(u64),
@@ -219,15 +219,15 @@ pub enum Value {
 /// `mutations` field. The order of checks is not specified, and is also not
 /// important because this ordering is un-observable.
 pub struct AtomicWrite {
-  pub checks: Vec<KvCheck>,
-  pub mutations: Vec<KvMutation>,
+  pub checks: Vec<Check>,
+  pub mutations: Vec<Mutation>,
   pub enqueues: Vec<Enqueue>,
 }
 
 /// A request to perform a check on a key in the database. The check is not
 /// performed on the value of the key, but rather on the versionstamp of the
 /// key.
-pub struct KvCheck {
+pub struct Check {
   pub key: Vec<u8>,
   pub versionstamp: Option<Versionstamp>,
 }
@@ -237,7 +237,7 @@ pub struct KvCheck {
 ///
 /// The type of mutation is specified by the `kind` field. The action performed
 /// by each mutation kind is specified in the docs for [MutationKind].
-pub struct KvMutation {
+pub struct Mutation {
   pub key: Vec<u8>,
   pub kind: MutationKind,
   pub expire_at: Option<DateTime<Utc>>,
@@ -305,15 +305,15 @@ pub struct Enqueue {
 /// the key does not exist in the database, then the value specified in the
 /// mutation is used as the new value of the key.
 pub enum MutationKind {
-  Set(Value),
+  Set(KvValue),
   Delete,
-  Sum(Value),
-  Min(Value),
-  Max(Value),
+  Sum(KvValue),
+  Min(KvValue),
+  Max(KvValue),
 }
 
 impl MutationKind {
-  pub fn value(&self) -> Option<&Value> {
+  pub fn value(&self) -> Option<&KvValue> {
     match self {
       MutationKind::Set(value) => Some(value),
       MutationKind::Sum(value) => Some(value),
@@ -358,25 +358,25 @@ pub const VALUE_ENCODING_LE64: i64 = 2;
 pub const VALUE_ENCODING_BYTES: i64 = 3;
 
 /// Decode a value, returning None if the encoding is not understood.
-pub fn decode_value(value: Vec<u8>, encoding: i64) -> Option<Value> {
+pub fn decode_value(value: Vec<u8>, encoding: i64) -> Option<KvValue> {
   let value = match encoding {
-    VALUE_ENCODING_V8 => Value::V8(value),
-    VALUE_ENCODING_BYTES => Value::Bytes(value),
+    VALUE_ENCODING_V8 => KvValue::V8(value),
+    VALUE_ENCODING_BYTES => KvValue::Bytes(value),
     VALUE_ENCODING_LE64 => {
       let mut buf = [0; 8];
       buf.copy_from_slice(&value);
-      Value::U64(u64::from_le_bytes(buf))
+      KvValue::U64(u64::from_le_bytes(buf))
     }
     _ => return None,
   };
   Some(value)
 }
 
-pub fn encode_value(value: &Value) -> (Cow<'_, [u8]>, i64) {
+pub fn encode_value(value: &KvValue) -> (Cow<'_, [u8]>, i64) {
   match value {
-    Value::V8(value) => (Cow::Borrowed(value), VALUE_ENCODING_V8),
-    Value::Bytes(value) => (Cow::Borrowed(value), VALUE_ENCODING_BYTES),
-    Value::U64(value) => {
+    KvValue::V8(value) => (Cow::Borrowed(value), VALUE_ENCODING_V8),
+    KvValue::Bytes(value) => (Cow::Borrowed(value), VALUE_ENCODING_BYTES),
+    KvValue::U64(value) => {
       let mut buf = [0; 8];
       buf.copy_from_slice(&value.to_le_bytes());
       (Cow::Owned(buf.to_vec()), VALUE_ENCODING_LE64)
@@ -384,11 +384,11 @@ pub fn encode_value(value: &Value) -> (Cow<'_, [u8]>, i64) {
   }
 }
 
-pub fn encode_value_owned(value: Value) -> (Vec<u8>, i64) {
+pub fn encode_value_owned(value: KvValue) -> (Vec<u8>, i64) {
   match value {
-    Value::V8(value) => (value, VALUE_ENCODING_V8),
-    Value::Bytes(value) => (value, VALUE_ENCODING_BYTES),
-    Value::U64(value) => {
+    KvValue::V8(value) => (value, VALUE_ENCODING_V8),
+    KvValue::Bytes(value) => (value, VALUE_ENCODING_BYTES),
+    KvValue::U64(value) => {
       let mut buf = [0; 8];
       buf.copy_from_slice(&value.to_le_bytes());
       (buf.to_vec(), VALUE_ENCODING_LE64)

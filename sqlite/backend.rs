@@ -11,11 +11,11 @@ use denokv_proto::encode_value_owned;
 use denokv_proto::AtomicWrite;
 use denokv_proto::CommitResult;
 use denokv_proto::KvEntry;
+use denokv_proto::KvValue;
 use denokv_proto::MutationKind;
 use denokv_proto::ReadRange;
 use denokv_proto::ReadRangeOutput;
 use denokv_proto::SnapshotReadOptions;
-use denokv_proto::Value;
 use denokv_proto::VALUE_ENCODING_V8;
 use rand::Rng;
 use rand::RngCore;
@@ -626,11 +626,11 @@ fn mutate_le64(
   tx: &Transaction,
   key: &[u8],
   op_name: &str,
-  operand: &Value,
+  operand: &KvValue,
   new_version: i64,
   mutate: impl FnOnce(u64, u64) -> u64,
 ) -> Result<(), anyhow::Error> {
-  let Value::U64(operand) = *operand else {
+  let KvValue::U64(operand) = *operand else {
     return Err(
       TypeError(format!(
         "Failed to perform '{op_name}' mutation on a non-U64 operand"
@@ -657,12 +657,12 @@ fn mutate_le64(
   };
 
   let new_value = match old_value {
-    Some(Value::U64(old_value)) => mutate(old_value, operand),
+    Some(KvValue::U64(old_value)) => mutate(old_value, operand),
     Some(_) => return Err(TypeError(format!("Failed to perform '{op_name}' mutation on a non-U64 value in the database")).into()),
     None => operand,
   };
 
-  let (new_value, encoding) = encode_value_owned(Value::U64(new_value));
+  let (new_value, encoding) = encode_value_owned(KvValue::U64(new_value));
 
   let changed = tx.prepare_cached(STATEMENT_KV_POINT_SET)?.execute(params![
     key,

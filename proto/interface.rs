@@ -330,10 +330,16 @@ pub struct CommitResult {
   pub versionstamp: Versionstamp,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataExchangeRequest {
+  #[serde(default)]
+  pub supported_versions: Vec<u64>,
+}
+
 /// The database metadata that is returned by the KV Connect metadata endpoint.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 pub struct DatabaseMetadata {
   pub version: u64,
   pub database_id: Uuid,

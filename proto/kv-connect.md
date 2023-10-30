@@ -103,10 +103,11 @@ exponential backoff strategy with unlimited retries.
 The client MUST verify that the response is a 200 OK, 3xx class redirect
 response, or 4xx class HTTP status response. If the response is a 3xx class
 redirect response, the client MUST follow the redirect and perform the metadata
-exchange with the new URL as the base URL. If the response is a 4xx class HTTP
-status response, the client MUST fatally abort the metadata exchange and display
-the error message to the user. If the response is a 200 OK response, the client
-MUST verify that the response body adheres to the JSON schema defined in the
+exchange with the new URL as the base URL (the client MAY impose a maximum
+redirect depth). If the response is a 4xx class HTTP status response, the client
+MUST fatally abort the metadata exchange and display the error message to the
+user. If the response is a 200 OK response, the client MUST verify that the
+response body adheres to the JSON schema defined in the
 `schema/kv-metadata-exchange-response.v<protocolversion>.json` file. If the
 response body is invalid, the client MUST fatally abort the metadata exchange
 and display the error message to the user.

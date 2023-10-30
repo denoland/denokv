@@ -352,7 +352,7 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
   let version: Version = match serde_json::from_str(body) {
     Ok(metadata) => metadata,
     Err(err) => {
-      return Err(format!("Could not parse out 'version' field: {}", err));
+      return Err(format!("could not get 'version' field: {}", err));
     }
   };
 
@@ -368,7 +368,7 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
   let metadata: DatabaseMetadata = match serde_json::from_str(body) {
     Ok(metadata) => metadata,
     Err(err) => {
-      return Err(format!("could not parse metadata: {}", err));
+      return Err(format!("{}", err));
     }
   };
 

@@ -85,16 +85,16 @@ client MUST follow the redirect and perform the metadata exchange with the new
 URL as the base URL.
 
 The server MAY return a 5xx class HTTP status response at any time if the server
-is unable to process the request right now due to a temporary condition. The
-server SHOULD include a plain text body with a human readable error message in
-this case.
+is unable to process the request right now due to a temporary condition, for
+example an internal server error or rate limiting. The server SHOULD include a
+plain text body with a human readable error message in this case.
 
 If the access token is valid and a database is found, the server MUST respond
 with a 200 OK response. This response MUST include a `Content-Type` header with
 the value `application/json`. The text encoding of the response body MUST be
-UTF-8. The response body MUST be a JSON object that adheres to the the JSON
-schema defined in the
-`schema/kv-metadata-exchange-response.v<protocolversion>.json` file.
+UTF-8. The response body MUST be a JSON object that adheres to the JSON schema
+defined in the `schema/kv-metadata-exchange-response.v<protocolversion>.json`
+file.
 
 If the client fails to receive a response from the server due to a network
 error, or a 5xx class HTTP status, the client SHOULD retry the request using an
@@ -250,9 +250,9 @@ message. If the request body is invalid, the server MUST respond with a 4xx
 response and a plain text body containing a human readable error message.
 
 The server MAY return a 5xx class HTTP status response at any time if the server
-is unable to process the request right now due to a temporary condition. The
-server SHOULD include a plain text body with a human readable error message in
-this case.
+is unable to process the request right now due to a temporary condition, for
+example an internal server error or rate limiting. The server SHOULD include a
+plain text body with a human readable error message in this case.
 
 The server MAY perform quota checks on the request. If the request is rejected
 due to quota limits, the server MUST respond with a 4xx class response and a
@@ -266,8 +266,8 @@ operation succeeds the server must respond with a 200 OK response. The response
 MUST include a `Content-Type` header with the value `...`. The response body
 MUST be a stream of Protobuf -->
 
-The server MUST perform the requested snapshot read operation. The the server
-MUST respond with a 200 OK response. The response MUST include a `Content-Type`
+The server MUST perform the requested snapshot read operation. The server MUST
+respond with a 200 OK response. The response MUST include a `Content-Type`
 header with the value `application/x-protobuf`. The response body MUST be a
 Protobuf message in the format `com.deno.kv.datapath.SnapshotReadOutput`. If the
 server is unable to perform the read because the database is not available from
@@ -349,8 +349,8 @@ The server MAY perform quota checks on the request. If the request is rejected
 due to quota limits, the server MUST respond with a 4xx class HTTP status
 response and a plain text body containing a human readable error message.
 
-The server MUST perform the requested atomic write operation. The the server
-MUST respond with a 200 OK response. The response MUST include a `Content-Type`
+The server MUST perform the requested atomic write operation. The server MUST
+respond with a 200 OK response. The response MUST include a `Content-Type`
 header with the value `application/x-protobuf`. The response body MUST be a
 Protobuf message in the format `com.deno.kv.datapath.AtomicWriteResponse`. If
 the server is unable to perform the write because the database is not available
@@ -378,7 +378,8 @@ endpoints, and then retry the request.
 
 If the response has a `status` field set to `AW_CHECK_FAILED`, the client MUST
 return an error to the user indicating that the write operation failed due to a
-check conflict.
+check conflict. The client SHOULD report the checks that failed to the user by
+interpereting the `check_failures` field of the response.
 
 If the response has a `status` field set to `AW_UNDEFINED`, the client MUST
 return an error to the user indicating that the write operation failed due to an

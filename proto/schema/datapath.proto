@@ -64,6 +64,8 @@ message AtomicWriteOutput {
   AtomicWriteStatus status = 1;
   // The versionstamp of the commit that wrote the data.
   bytes versionstamp = 2;
+  // The indexes to checks that failed their check condition.
+  repeated uint32 failed_checks = 4;
 }
 
 // A mutation to perform.

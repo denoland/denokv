@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +25,8 @@ use rusqlite::params;
 use rusqlite::OptionalExtension;
 use rusqlite::Transaction;
 use uuid::Uuid;
+
+use crate::time::utc_now;
 
 const STATEMENT_INC_AND_GET_DATA_VERSION: &str =
   "update data_version set version = version + ? where k = 0 returning version";
@@ -343,7 +347,7 @@ impl SqliteBackend {
 
   pub fn queue_running_keepalive(&mut self) -> Result<(), anyhow::Error> {
     let running_messages = self.messages_running.clone();
-    let now = Utc::now();
+    let now = utc_now();
     self.run_tx(|tx, _| {
       let mut update_deadline_stmt =
         tx.prepare_cached(STATEMENT_QUEUE_UPDATE_RUNNING_DEADLINE)?;
@@ -360,7 +364,7 @@ impl SqliteBackend {
   }
 
   pub fn queue_cleanup(&mut self) -> Result<(), anyhow::Error> {
-    let now = Utc::now();
+    let now = utc_now();
     let queue_dequeue_waker = self.dequeue_notify.clone();
     loop {
       let done = self.run_tx(|tx, rng| {
@@ -389,7 +393,7 @@ impl SqliteBackend {
     &mut self,
   ) -> Result<(Option<DequeuedMessage>, Option<DateTime<Utc>>), anyhow::Error>
   {
-    let now = Utc::now();
+    let now = utc_now();
 
     let can_dispatch = self.messages_running.len() < DISPATCH_CONCURRENCY_LIMIT;
 
@@ -476,7 +480,7 @@ impl SqliteBackend {
     id: &QueueMessageId,
     success: bool,
   ) -> Result<(), anyhow::Error> {
-    let now = Utc::now();
+    let now = utc_now();
     let requeued = self.run_tx(|tx, rng| {
       let requeued = if success {
         let changed = tx
@@ -498,7 +502,7 @@ impl SqliteBackend {
   pub fn collect_expired(
     &mut self,
   ) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
-    let now = Utc::now();
+    let now = utc_now();
     self.run_tx(|tx, _| {
       tx.prepare_cached(STATEMENT_DELETE_ALL_EXPIRED)?
         .execute(params![now.timestamp_millis()])?;

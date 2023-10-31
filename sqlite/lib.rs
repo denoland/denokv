@@ -1,4 +1,7 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 mod backend;
+mod time;
 
 use std::collections::VecDeque;
 use std::ops::Add;
@@ -24,6 +27,7 @@ use denokv_proto::SnapshotReadOptions;
 use futures::future::Either;
 use rand::RngCore;
 pub use rusqlite::Connection;
+use time::utc_now;
 use tokio::select;
 use tokio::sync::oneshot;
 use tokio::sync::Notify;
@@ -109,7 +113,7 @@ async fn sqlite_thread(
   dequeue_notify: Arc<Notify>,
   mut request_rx: tokio::sync::mpsc::Receiver<SqliteRequest>,
 ) {
-  let start = Utc::now();
+  let start = utc_now();
   if let Err(err) = backend.queue_cleanup() {
     panic!("KV queue cleanup failed: {err}");
   }
@@ -138,7 +142,7 @@ async fn sqlite_thread(
     EXPIRY_JITTER,
   );
   loop {
-    let now = Utc::now();
+    let now = utc_now();
     let mut closest_deadline = queue_cleanup_deadline
       .min(queue_keepalive_deadline)
       .min(expiry_deadline);
@@ -245,7 +249,7 @@ fn compute_deadline_with_max_and_jitter(
   max: Duration,
   jitter_duration: Duration,
 ) -> DateTime<Utc> {
-  let fallback = Utc::now() + max;
+  let fallback = utc_now() + max;
   next_ready.unwrap_or(fallback).min(fallback)
     + duration_with_total_jitter(jitter_duration)
 }

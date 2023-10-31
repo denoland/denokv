@@ -10,6 +10,7 @@ use axum::body::Bytes;
 use axum::debug_handler;
 use axum::extract::FromRequest;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::Request;
 use axum::http::StatusCode;
 use axum::middleware;
@@ -64,9 +65,8 @@ async fn main() -> Result<(), anyhow::Error> {
   env_logger::init();
 
   let path = Path::new(&config.sqlite_path);
-  info!("Opening database at {}", config.sqlite_path);
-
-  let sqlite = open_sqlite(path)?;
+  let (sqlite, path) = open_sqlite(path)?;
+  info!("Opened database at {}", path);
 
   let access_token = Box::leak(config.access_token.into_boxed_str());
 
@@ -100,17 +100,19 @@ async fn main() -> Result<(), anyhow::Error> {
   Ok(())
 }
 
-fn open_sqlite(path: &Path) -> Result<Sqlite, anyhow::Error> {
+fn open_sqlite(path: &Path) -> Result<(Sqlite, String), anyhow::Error> {
   let conn = Connection::open(path)?;
   let notify = Arc::new(Notify::new());
   let rng: Box<_> = Box::new(rand::rngs::StdRng::from_entropy());
+  let path = conn.path().unwrap().to_owned();
   let sqlite = Sqlite::new(conn, notify, rng)?;
-  Ok(sqlite)
+  Ok((sqlite, path))
 }
 
 #[axum::debug_handler]
 async fn metadata_endpoint(
   State(state): State<AppState>,
+  headers: HeaderMap,
   maybe_req: Option<Json<MetadataExchangeRequest>>,
 ) -> Result<Json<DatabaseMetadata>, ApiError> {
   let Some(Json(req)) = maybe_req else {
@@ -118,6 +120,17 @@ async fn metadata_endpoint(
   };
   if !req.supported_versions.contains(&2) {
     return Err(ApiError::NoMatchingProtocolVersion);
+  }
+  let Some(authorization) =
+    headers.get("authorization").and_then(|v| v.to_str().ok())
+  else {
+    return Err(ApiError::MalformedAuthorizationHeader);
+  };
+  let Some((bearer, token)) = authorization.split_once(' ') else {
+    return Err(ApiError::MalformedAuthorizationHeader);
+  };
+  if bearer.to_lowercase() != "bearer" || token != state.access_token {
+    return Err(ApiError::InvalidAccessToken);
   }
   let expires_at = utc_now() + Duration::days(1);
   Ok(Json(DatabaseMetadata {

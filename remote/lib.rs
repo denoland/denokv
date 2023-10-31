@@ -1,3 +1,7 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
+mod time;
+
 use std::ops::Sub;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +29,7 @@ use log::warn;
 use rand::Rng;
 use reqwest::StatusCode;
 use serde::Deserialize;
+use time::utc_now;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use url::Url;
@@ -231,15 +236,15 @@ async fn metadata_refresh_task(
     match res {
       RetryableResult::Ok(metadata) => {
         attempts = 0;
-        let expires_in = metadata.expires_at.signed_duration_since(Utc::now());
+        let expires_in = metadata.expires_at.signed_duration_since(utc_now());
 
         if tx.send(MetadataState::Ok(Arc::new(metadata))).is_err() {
           // The receiver has been dropped, so we can stop now.
           return;
         }
 
-        // Sleep until the token expires, minus a 10 minute buffer, but at minimum
-        // one minute.
+        // Sleep until the token expires, minus a 10 minute buffer, but at
+        // minimum one minute.
         let sleep_time = expires_in
           .sub(chrono::Duration::seconds(10))
           .to_std()

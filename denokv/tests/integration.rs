@@ -17,7 +17,11 @@ fn denokv_exe() -> PathBuf {
   } else {
     path.push("release");
   }
-  path.push("denokv");
+  if cfg!(target_os = "windows") {
+    path.push("denokv.exe");
+  } else {
+    path.push("denokv");
+  }
   path
 }
 

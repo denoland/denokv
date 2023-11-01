@@ -488,10 +488,7 @@ impl<P: RemotePermissions> Database for Remote<P> {
     for check in write.checks {
       checks.push(pb::Check {
         key: check.key,
-        versionstamp: check
-          .versionstamp
-          .map(|v| v.to_vec())
-          .unwrap_or_default(),
+        versionstamp: check.versionstamp.unwrap_or([0; 10]).to_vec(),
       });
     }
 
@@ -571,9 +568,10 @@ impl<P: RemotePermissions> Database for Remote<P> {
       pb::AtomicWriteStatus::AwWriteDisabled => {
         Err(anyhow::anyhow!("Writes are disabled for this database."))
       }
-      pb::AtomicWriteStatus::AwUnspecified => {
-        Err(anyhow::anyhow!("Unspecified write error."))
-      }
+      pb::AtomicWriteStatus::AwUnspecified => Err(anyhow::anyhow!(
+        "Unspecified write error (code {}).",
+        res.status
+      )),
     }
   }
 

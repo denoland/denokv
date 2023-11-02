@@ -255,7 +255,7 @@ impl SqliteBackend {
   ) -> Result<Option<CommitResult>, anyhow::Error> {
     if self.readonly {
       return Err(
-        TypeError(format!("Cannot write to a read-only database")).into(),
+        TypeError("Cannot write to a read-only database".to_string()).into(),
       );
     }
 

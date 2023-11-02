@@ -22,6 +22,7 @@ use denokv_proto::VALUE_ENCODING_V8;
 use rand::Rng;
 use rand::RngCore;
 use rusqlite::params;
+use rusqlite::DatabaseName;
 use rusqlite::OptionalExtension;
 use rusqlite::Transaction;
 use uuid::Uuid;
@@ -139,6 +140,7 @@ pub struct SqliteBackend {
   rng: Box<dyn RngCore + Send>,
   pub dequeue_notify: Arc<tokio::sync::Notify>,
   pub messages_running: HashSet<QueueMessageId>,
+  pub readonly: bool,
 }
 
 impl SqliteBackend {
@@ -164,15 +166,20 @@ impl SqliteBackend {
     dequeue_notify: Arc<tokio::sync::Notify>,
     rng: Box<dyn RngCore + Send>,
   ) -> Result<Self, anyhow::Error> {
-    conn.pragma_update(None, "journal_mode", "wal")?;
-
+    let readonly = conn.is_readonly(DatabaseName::Main)?;
     let mut this = Self {
       conn,
       rng,
       dequeue_notify,
       messages_running: HashSet::new(),
+      readonly,
     };
 
+    if readonly {
+      return Ok(this);
+    }
+
+    this.conn.pragma_update(None, "journal_mode", "wal")?;
     this.run_tx(|tx, _| {
       tx.execute(STATEMENT_CREATE_MIGRATION_TABLE, [])?;
 
@@ -246,6 +253,12 @@ impl SqliteBackend {
     &mut self,
     write: AtomicWrite,
   ) -> Result<Option<CommitResult>, anyhow::Error> {
+    if self.readonly {
+      return Err(
+        TypeError(format!("Cannot write to a read-only database")).into(),
+      );
+    }
+
     let (has_enqueues, commit_result) = self.run_tx(|tx, rng| {
       for check in &write.checks {
         let real_versionstamp = tx

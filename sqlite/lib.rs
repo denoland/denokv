@@ -119,9 +119,13 @@ async fn sqlite_thread(
   }
   let mut dequeue_channels: VecDeque<oneshot::Sender<DequeuedMessage>> =
     VecDeque::with_capacity(4);
-  let queue_next_ready = match backend.queue_next_ready() {
-    Ok(queue_next_ready) => queue_next_ready,
-    Err(err) => panic!("KV queue_next_ready failed: {err}"),
+  let queue_next_ready = if backend.readonly {
+    None
+  } else {
+    match backend.queue_next_ready() {
+      Ok(queue_next_ready) => queue_next_ready,
+      Err(err) => panic!("KV queue_next_ready failed: {err}"),
+    }
   };
   let mut queue_dequeue_deadline = compute_deadline_with_max_and_jitter(
     queue_next_ready,
@@ -132,9 +136,13 @@ async fn sqlite_thread(
     start + duration_with_jitter(QUEUE_RUNNING_CLEANUP_INTERVAL);
   let mut queue_keepalive_deadline =
     start + duration_with_jitter(QUEUE_MESSAGE_DEADLINE_UPDATE_INTERVAL);
-  let expiry_next_ready = match backend.collect_expired() {
-    Ok(expiry_next_ready) => expiry_next_ready,
-    Err(err) => panic!("KV collect expired failed: {err}"),
+  let expiry_next_ready = if backend.readonly {
+    None
+  } else {
+    match backend.collect_expired() {
+      Ok(expiry_next_ready) => expiry_next_ready,
+      Err(err) => panic!("KV collect expired failed: {err}"),
+    }
   };
   let mut expiry_deadline = compute_deadline_with_max_and_jitter(
     expiry_next_ready,
@@ -149,12 +157,14 @@ async fn sqlite_thread(
     if !dequeue_channels.is_empty() {
       closest_deadline = closest_deadline.min(queue_dequeue_deadline);
     }
-    let timer = if let Ok(time_to_closest_deadline) =
+    let timer = if backend.readonly {
+      Either::Left(futures::future::pending::<()>())
+    } else if let Ok(time_to_closest_deadline) =
       closest_deadline.signed_duration_since(now).to_std()
     {
-      Either::Left(tokio::time::sleep(time_to_closest_deadline))
+      Either::Right(Either::Left(tokio::time::sleep(time_to_closest_deadline)))
     } else {
-      Either::Right(futures::future::ready(()))
+      Either::Right(Either::Right(futures::future::ready(())))
     };
     select! {
       biased;

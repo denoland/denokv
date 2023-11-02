@@ -23,6 +23,7 @@ use axum::Router;
 use chrono::Duration;
 use clap::Parser;
 use config::Config;
+use constant_time_eq::constant_time_eq;
 use denokv_proto::datapath as pb;
 use denokv_proto::decode_value;
 use denokv_proto::encode_value;
@@ -64,6 +65,10 @@ async fn main() -> Result<(), anyhow::Error> {
   std::env::set_var("RUST_LOG", "info");
   env_logger::init();
 
+  if config.access_token.len() < 12 {
+    anyhow::bail!("Access token must be at minimum 12 chars long.");
+  }
+
   let path = Path::new(&config.sqlite_path);
   let (sqlite, path) = open_sqlite(path)?;
   info!("Opened database at {}", path);
@@ -85,7 +90,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
   let app = Router::new()
     .route("/", post(metadata_endpoint))
-    .nest("/v1", v1)
+    .nest("/v2", v1)
     .fallback(fallback_handler)
     .with_state(state);
 
@@ -129,7 +134,9 @@ async fn metadata_endpoint(
   let Some((bearer, token)) = authorization.split_once(' ') else {
     return Err(ApiError::MalformedAuthorizationHeader);
   };
-  if bearer.to_lowercase() != "bearer" || token != state.access_token {
+  if bearer.to_lowercase() != "bearer"
+    || !constant_time_eq(token.as_bytes(), state.access_token.as_bytes())
+  {
     return Err(ApiError::InvalidAccessToken);
   }
   let expires_at = utc_now() + Duration::days(1);
@@ -137,7 +144,7 @@ async fn metadata_endpoint(
     version: 2,
     database_id: Uuid::nil(),
     endpoints: vec![EndpointInfo {
-      url: Cow::Borrowed("/v1"),
+      url: Cow::Borrowed("/v2"),
       consistency: Cow::Borrowed("strong"),
     }],
     token: Cow::Borrowed(state.access_token),
@@ -310,8 +317,8 @@ async fn atomic_write_endpoint(
     }
     total_payload_size += value_size;
 
-    let kind = match (mutation.mutation_type, mutation.value) {
-      (1, Some(value)) => {
+    let kind = match (mutation.mutation_type(), mutation.value) {
+      (pb::MutationType::MSet, Some(value)) => {
         let value = decode_value(value.data, value.encoding as i64)
           .ok_or_else(|| {
             error!(
@@ -322,8 +329,8 @@ async fn atomic_write_endpoint(
           })?;
         MutationKind::Set(value)
       }
-      (2, None) => MutationKind::Delete,
-      (3, Some(value)) => {
+      (pb::MutationType::MDelete, _) => MutationKind::Delete,
+      (pb::MutationType::MSum, Some(value)) => {
         let value = decode_value(value.data, value.encoding as i64)
           .ok_or_else(|| {
             error!(
@@ -334,7 +341,7 @@ async fn atomic_write_endpoint(
           })?;
         MutationKind::Sum(value)
       }
-      (4, Some(value)) => {
+      (pb::MutationType::MMin, Some(value)) => {
         let value = decode_value(value.data, value.encoding as i64)
           .ok_or_else(|| {
             error!(
@@ -345,7 +352,7 @@ async fn atomic_write_endpoint(
           })?;
         MutationKind::Min(value)
       }
-      (5, Some(value)) => {
+      (pb::MutationType::MMax, Some(value)) => {
         let value = decode_value(value.data, value.encoding as i64)
           .ok_or_else(|| {
             error!(

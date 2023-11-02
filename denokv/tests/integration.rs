@@ -9,6 +9,8 @@ use denokv_proto::ReadRange;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 
+const ACCESS_TOKEN: &str = "1234abcd5678efgh";
+
 fn denokv_exe() -> PathBuf {
   let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   path.push("../target");
@@ -32,7 +34,7 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
     .arg(tmp_file)
     .arg("--addr")
     .arg("0.0.0.0:0")
-    .env("DENO_KV_ACCESS_TOKEN", "abc123")
+    .env("DENO_KV_ACCESS_TOKEN", ACCESS_TOKEN)
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .spawn()
@@ -91,7 +93,7 @@ async fn basics() {
 
   let metadata_endpoint = denokv_remote::MetadataEndpoint {
     url,
-    access_token: "abc123".to_string(),
+    access_token: ACCESS_TOKEN.to_string(),
   };
 
   let remote =
@@ -153,4 +155,34 @@ async fn basics() {
     denokv_proto::KvValue::U64(1)
   ));
   assert_eq!(range.entries[0].versionstamp, commit_result.versionstamp);
+}
+
+#[tokio::test]
+async fn no_auth() {
+  let (_child, addr) = start_server().await;
+  let client = reqwest::Client::new();
+  let url = format!("http://{}", addr).parse().unwrap();
+
+  let metadata_endpoint = denokv_remote::MetadataEndpoint {
+    url,
+    access_token: "".to_string(),
+  };
+
+  let remote =
+    denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
+
+  let res = remote
+    .snapshot_read(
+      vec![ReadRange {
+        start: vec![],
+        end: vec![0xff],
+        limit: NonZeroU32::try_from(10).unwrap(),
+        reverse: false,
+      }],
+      denokv_proto::SnapshotReadOptions {
+        consistency: denokv_proto::Consistency::Strong,
+      },
+    )
+    .await;
+  assert!(res.is_err());
 }

@@ -114,8 +114,10 @@ async fn sqlite_thread(
   mut request_rx: tokio::sync::mpsc::Receiver<SqliteRequest>,
 ) {
   let start = utc_now();
-  if let Err(err) = backend.queue_cleanup() {
-    panic!("KV queue cleanup failed: {err}");
+  if !backend.readonly {
+    if let Err(err) = backend.queue_cleanup() {
+      panic!("KV queue cleanup failed: {err}");
+    }
   }
   let mut dequeue_channels: VecDeque<oneshot::Sender<DequeuedMessage>> =
     VecDeque::with_capacity(4);

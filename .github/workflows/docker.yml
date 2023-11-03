@@ -1,0 +1,39 @@
+name: docker
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["*"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Build image
+        run: |
+          docker build -f Dockerfile -t denokv .
+
+      - name: Smoke test image
+        run: |
+          docker run -i --init denokv --help
+
+      - name: Login to ghcr.io
+        if: github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+
+      - name: Push images
+        if: github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          docker tag denokv ghcr.io/denoland/denokv:${GITHUB_REF#refs/*/}
+          docker push ghcr.io/denoland/denokv:${GITHUB_REF#refs/*/}
+          docker tag denokv ghcr.io/denoland/denokv:latest
+          docker push ghcr.io/denoland/denokv:latest

@@ -165,11 +165,11 @@ Content-Length: 315
   "uuid": "a1b2c3d4-e5f6-7g8h-9i1j-2k3l4m5n6o7p",
   "endpoints": [
     {
-      "url": "/v1",
+      "url": "/v2",
       "consistency": "strong"
     },
     {
-      "url": "https://mirror.example.com/v1",
+      "url": "https://mirror.example.com/v2",
       "consistency": "eventual"
     }
   ],
@@ -302,7 +302,7 @@ return the values to the user.
 Example snapshot read request:
 
 ```http
-POST /v1/snapshot_read HTTP/1.1
+POST /v2/snapshot_read HTTP/1.1
 Authorization: Bearer 123abc456def789ghi
 Content-Type: application/x-protobuf
 x-denokv-version: 2
@@ -392,7 +392,7 @@ return the versionstamp of the write operation to the user.
 Example atomic write request:
 
 ```http
-POST /v1/atomic_write HTTP/1.1
+POST /v2/atomic_write HTTP/1.1
 Authorization: Bearer 123abc456def789ghi
 Content-Type: application/x-protobuf
 x-denokv-version: 2

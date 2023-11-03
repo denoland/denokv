@@ -13,7 +13,10 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v3
@@ -21,30 +24,82 @@ jobs:
       - name: Install Rust
         uses: dsherret/rust-toolchain-file@v1
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install protoc
         uses: arduino/setup-protoc@v2
         with:
           version: "21.12"
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check formatting
         run: cargo fmt -- --check
 
       - name: Check linting
-        run: cargo clippy --all-targets --all-features -- -D clippy::all
+        run: cargo clippy --release --all-targets --all-features -- -D clippy::all
 
       - name: Build
-        run: cargo build --all-targets --all-features --tests -v
+        run: cargo build --release --all-targets --all-features --tests -v
 
       - name: Test
-        run: cargo test
+        run: cargo test --release -- --nocapture
 
-      - name: Publish
-        if: |
-          runner.os == 'Linux' &&
-          github.repository == 'denoland/denokv' &&
-          startsWith(github.ref, 'refs/tags/')
+      - name: Prepare artifact (Linux)
+        if: runner.os == 'Linux'
+        run: |-
+          cd target/release
+          zip -r denokv-x86_64-unknown-linux-gnu.zip denokv
+
+      - name: Prepare artifact (macOS)
+        if: runner.os == 'macOS'
+        run: |-
+          cd target/release
+          zip -r denokv-x86_64-apple-darwin.zip denokv
+
+      - name: Prepare artifact (Windows)
+        if: runner.os == 'Windows'
+        run: |-
+          Compress-Archive -CompressionLevel Optimal -Force -Path target/release/denokv.exe -DestinationPath target/release/denokv-x86_64-pc-windows-msvc.zip
+
+      - name: Upload artifact (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v3
+        with:
+          name: denokv-x86_64-unknown-linux-gnu.zip
+          path: target/release/denokv-x86_64-unknown-linux-gnu.zip
+
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v3
+        with:
+          name: denokv-x86_64-apple-darwin.zip
+          path: target/release/denokv-x86_64-apple-darwin.zip
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v3
+        with:
+          name: denokv-x86_64-pc-windows-msvc.zip
+          path: target/release/denokv-x86_64-pc-windows-msvc.zip
+
+      - name: Upload release to GitHub
+        uses: softprops/action-gh-release@v0.1.15
+        if: github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        with:
+          files: |-
+            target/release/denokv-x86_64-pc-windows-msvc.zip
+            target/release/denokv-x86_64-unknown-linux-gnu.zip
+            target/release/denokv-x86_64-apple-darwin.zip
+          draft: true
+
+      - name: Publish to crates.io
+        if: runner.os == 'Linux' && github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
+        run: |-
           cargo publish -vv -p denokv_proto
           cargo publish -vv -p denokv_sqlite
+          cargo publish -vv -p denokv_remote
+          cargo publish -vv -p denokv

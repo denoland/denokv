@@ -91,7 +91,7 @@ impl denokv_remote::RemotePermissions for DummyPermissions {
 async fn basics() {
   let (_child, addr) = start_server().await;
   let client = reqwest::Client::new();
-  let url = format!("http://{}", addr).parse().unwrap();
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
 
   let metadata_endpoint = denokv_remote::MetadataEndpoint {
     url,
@@ -163,7 +163,7 @@ async fn basics() {
 async fn no_auth() {
   let (_child, addr) = start_server().await;
   let client = reqwest::Client::new();
-  let url = format!("http://{}", addr).parse().unwrap();
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
 
   let metadata_endpoint = denokv_remote::MetadataEndpoint {
     url,

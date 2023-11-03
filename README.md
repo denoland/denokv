@@ -14,7 +14,7 @@ backend.
 To run `denokv`, just run:
 
 ```sh
-$ docker run -p 4512:4512 ghcr.io/denoland/denokv -- --sqlite-path /data/denokv.sqlite --access-token <random-token>
+docker run -it --init -p 4512:4512 -v ./data:/data ghcr.io/denoland/denokv --sqlite-path /data/denokv.sqlite --access-token <random-token>
 ```
 
 Then run your Deno program and specify the access token in the
@@ -69,7 +69,7 @@ Then run the `denokv` Docker image, mounting the `/data` directory as a volume
 and specifying a random access token.
 
 ```sh
-docker run -p 4512:4512 -v /data:/data ghcr.io/denoland/denokv -- --sqlite-path /data/denokv.sqlite --access-token <random-token>
+docker run -it --init -p 4512:4512 -v ./data:/data ghcr.io/denoland/denokv --sqlite-path /data/denokv.sqlite --access-token --access-token <random-token>
 ```
 
 You can now access the database from your Deno programs by specifying the access

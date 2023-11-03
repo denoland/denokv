@@ -37,6 +37,7 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
     .env("DENO_KV_ACCESS_TOKEN", ACCESS_TOKEN)
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
+    .kill_on_drop(true)
     .spawn()
     .unwrap();
 
@@ -101,6 +102,7 @@ async fn basics() {
   let remote =
     denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
 
+
   let ranges = remote
     .snapshot_read(
       vec![ReadRange {
@@ -134,6 +136,7 @@ async fn basics() {
     .expect("commit success");
   assert_ne!(commit_result.versionstamp, [0; 10]);
 
+
   let ranges = remote
     .snapshot_read(
       vec![ReadRange {
@@ -157,6 +160,8 @@ async fn basics() {
     denokv_proto::KvValue::U64(1)
   ));
   assert_eq!(range.entries[0].versionstamp, commit_result.versionstamp);
+
+  println!("remote");
 }
 
 #[tokio::test]

@@ -41,21 +41,42 @@ jobs:
         run: cargo test --release
 
       - name: Prepare artifact (Linux)
-        if: runner.os == 'Linux' && github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
+        if: runner.os == 'Linux'
         run: |-
           cd target/release
           zip -r denokv-x86_64-unknown-linux-gnu.zip denokv
 
       - name: Prepare artifact (macOS)
-        if: runner.os == 'macOS' && github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
+        if: runner.os == 'macOS'
         run: |-
           cd target/release
           zip -r denokv-x86_64-apple-darwin.zip denokv
 
       - name: Prepare artifact (Windows)
-        if: runner.os == 'Windows' && github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
+        if: runner.os == 'Windows'
         run: |-
           Compress-Archive -CompressionLevel Optimal -Force -Path target/release/denokv.exe -DestinationPath target/release/denokv-x86_64-pc-windows-msvc.zip
+
+      - name: Upload artifact (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v3
+        with:
+          name: denokv-x86_64-unknown-linux-gnu.zip
+          path: target/release/denokv-x86_64-unknown-linux-gnu.zip
+
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v3
+        with:
+          name: denokv-x86_64-apple-darwin.zip
+          path: target/release/denokv-x86_64-apple-darwin.zip
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v3
+        with:
+          name: denokv-x86_64-pc-windows-msvc.zip
+          path: target/release/denokv-x86_64-pc-windows-msvc.zip
 
       - name: Upload release to GitHub
         uses: softprops/action-gh-release@v0.1.15

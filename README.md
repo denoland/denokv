@@ -1,6 +1,6 @@
 # denokv
 
-A self-hosted server for Deno KV, the JavaScript first key-value database:
+A self-hosted backend for Deno KV, the JavaScript first key-value database:
 
 - Seamlessly integrated JavaScript APIs
 - ACID transactions
@@ -14,7 +14,7 @@ backend.
 To run `denokv`, just run:
 
 ```sh
-$ docker run -p 4512:4512 denoland/denokv -- --sqlite-path /data/denokv.sqlite --access-token <random-token>
+$ docker run -p 4512:4512 ghcr.io/denoland/denokv -- --sqlite-path /data/denokv.sqlite --access-token <random-token>
 ```
 
 Then run your Deno program and specify the access token in the
@@ -69,7 +69,7 @@ Then run the `denokv` Docker image, mounting the `/data` directory as a volume
 and specifying a random access token.
 
 ```sh
-docker run -p 4512:4512 -v /data:/data denoland/denokv -- --sqlite-path /data/denokv.sqlite --access-token <random-token>
+docker run -p 4512:4512 -v /data:/data ghcr.io/denoland/denokv -- --sqlite-path /data/denokv.sqlite --access-token <random-token>
 ```
 
 You can now access the database from your Deno programs by specifying the access
@@ -83,7 +83,7 @@ compatible with any HTTP proxy, such as `caddy`, `nginx`, or a loadbalancer.
 
 ### Fly.io
 
-You can easially host `denokv` on https://fly.io.
+You can easily host `denokv` on https://fly.io.
 
 > Note: Fly.io is a paid service. You will need to add a credit card to your
 > account to use it.
@@ -160,6 +160,8 @@ variable.
 ## Advanced setup
 
 ### Continuous backup using LiteFS
+
+TODO
 
 ## Other things in this repo
 

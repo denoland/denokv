@@ -24,7 +24,7 @@ jobs:
 
       - name: Smoke test image
         run: |
-          docker run -it --init denokv -- --help
+          docker run -i --init denokv -- --help
 
       - name: Login to ghcr.io
         if: github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')

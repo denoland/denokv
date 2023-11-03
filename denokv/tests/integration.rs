@@ -102,7 +102,6 @@ async fn basics() {
   let remote =
     denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
 
-
   let ranges = remote
     .snapshot_read(
       vec![ReadRange {
@@ -135,7 +134,6 @@ async fn basics() {
     .unwrap()
     .expect("commit success");
   assert_ne!(commit_result.versionstamp, [0; 10]);
-
 
   let ranges = remote
     .snapshot_read(

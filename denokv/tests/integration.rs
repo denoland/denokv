@@ -74,6 +74,8 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
     }
   });
 
+  println!("Server started and listening on {}", addr);
+
   (child, addr)
 }
 

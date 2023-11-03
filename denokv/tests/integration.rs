@@ -33,7 +33,7 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
     .arg("--sqlite-path")
     .arg(tmp_file)
     .arg("--addr")
-    .arg("0.0.0.0:0")
+    .arg("127.0.0.1:0")
     .env("DENO_KV_ACCESS_TOKEN", ACCESS_TOKEN)
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())

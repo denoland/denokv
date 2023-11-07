@@ -15,15 +15,28 @@ message SnapshotRead {
 // The request is considered successful if the length of the ranges in the input
 // and output match.
 message SnapshotReadOutput {
-  reserved 3, 5;
+  reserved 3, 5, 6;
 
   // The read ranges. The ranges are in the same order as the read ranges in the
   // request.
   repeated ReadRangeOutput ranges = 1;
-  // The request failed because this region does not support reading data.
+  // The request failed because this region does not support reading data. This
+  // is equivalent to status being SR_READ_DISABLED.
   bool read_disabled = 2;
   // Whether the read was strongly consistent.
   bool read_is_strongly_consistent = 4;
+  // The status of the read.
+  SnapshotReadStatus status = 7;
+}
+
+// The status of a read request.
+enum SnapshotReadStatus {
+  // The read status is unspecified or unknown.
+  SR_UNSPECIFIED = 0;
+  // The read succeeded.
+  SR_SUCCESS = 1;
+  // The read failed because the region is unable to serve reads right now.
+  SR_READ_DISABLED = 2;
 }
 
 // A key range to read. The range is inclusive of the start and exclusive of the
@@ -166,4 +179,33 @@ message Enqueue {
   // second delay is the delay before the second retry, and so on. If the list
   // is empty, the message will not be retried.
   repeated uint32 backoff_schedule = 4;
+}
+
+// A request to watch some keys for updates.
+message Watch {
+  // The keys to watch.
+  repeated WatchKey keys = 1;
+}
+
+// The response to a watch request.
+message WatchOutput {
+  // The status of the watch.
+  SnapshotReadStatus status = 1;
+  // For each watched key, whether the value changed since the last watch
+  // request, and if so, the new value.
+  repeated WatchKeyOutput keys = 2;
+}
+
+// A key to watch.
+message WatchKey {
+  // The key to watch.
+  bytes key = 1;
+}
+
+// The response to a watch request for a single key.
+message WatchKeyOutput {
+  // Whether the value changed since the last watch delivery.
+  bool changed = 1;
+  // The new value, if changed is true.
+  KvEntry entry_if_changed = 2;
 }

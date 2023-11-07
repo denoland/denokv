@@ -16,6 +16,7 @@ bundled = ["rusqlite/bundled"]
 
 [dependencies]
 anyhow.workspace = true
+async-stream.workspace= true
 async-trait.workspace = true
 chrono.workspace = true
 denokv_proto.workspace = true

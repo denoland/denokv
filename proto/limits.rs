@@ -12,3 +12,4 @@ pub const MAX_QUEUE_DELAY_MS: u64 = 30 * 24 * 60 * 60 * 1000; // 30 days
 pub const MAX_QUEUE_UNDELIVERED_KEYS: usize = 10;
 pub const MAX_QUEUE_BACKOFF_INTERVALS: usize = 10;
 pub const MAX_QUEUE_BACKOFF_MS: u32 = 3600000; // 1 hour
+pub const MAX_WATCHED_KEYS: usize = 10;

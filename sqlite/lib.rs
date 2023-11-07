@@ -3,10 +3,16 @@
 mod backend;
 mod time;
 
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::num::NonZeroU32;
 use std::ops::Add;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::RwLock;
+use std::sync::Weak;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -15,6 +21,7 @@ use crate::backend::DequeuedMessage;
 use crate::backend::QueueMessageId;
 use crate::backend::SqliteBackend;
 pub use crate::backend::TypeError;
+use async_stream::try_stream;
 use chrono::DateTime;
 use chrono::Utc;
 use denokv_proto::AtomicWrite;
@@ -24,12 +31,16 @@ use denokv_proto::QueueMessageHandle;
 use denokv_proto::ReadRange;
 use denokv_proto::ReadRangeOutput;
 use denokv_proto::SnapshotReadOptions;
+use denokv_proto::Versionstamp;
+use denokv_proto::WatchKeyOutput;
 use futures::future::Either;
+use futures::Stream;
 use rand::RngCore;
 pub use rusqlite::Connection;
 use time::utc_now;
 use tokio::select;
 use tokio::sync::oneshot;
+use tokio::sync::watch;
 use tokio::sync::Notify;
 
 /// The interval at which the queue_running table is cleaned up of stale
@@ -53,7 +64,9 @@ enum SqliteRequest {
   SnapshotRead {
     requests: Vec<ReadRange>,
     options: SnapshotReadOptions,
-    sender: oneshot::Sender<Result<Vec<ReadRangeOutput>, anyhow::Error>>,
+    sender: oneshot::Sender<
+      Result<(Vec<ReadRangeOutput>, Versionstamp), anyhow::Error>,
+    >,
   },
   AtomicWrite {
     write: AtomicWrite,
@@ -69,21 +82,115 @@ enum SqliteRequest {
   },
 }
 
+// A structure that across threads in the same process, can be used to support
+// multiple Sqlite structs that all share the underlying database, but with
+// different connections, to notify each other for KV queues and KV watch
+// related events.
+#[derive(Default, Clone)]
+pub struct SqliteNotifier(Arc<SqliteNotifierInner>);
+
+#[derive(Default)]
+struct SqliteNotifierInner {
+  dequeue_notify: Notify,
+  key_watchers: RwLock<HashMap<Vec<u8>, watch::Sender<Versionstamp>>>,
+}
+
+struct SqliteKeySubscription {
+  notifier: Weak<SqliteNotifierInner>,
+  key: Option<Vec<u8>>,
+  receiver: watch::Receiver<Versionstamp>,
+}
+
+impl SqliteNotifier {
+  fn schedule_dequeue(&self) {
+    self.0.dequeue_notify.notify_one();
+  }
+
+  fn notify_key_update(&self, key: &[u8], versionstamp: Versionstamp) {
+    let key_watchers = self.0.key_watchers.read().unwrap();
+    if let Some(sender) = key_watchers.get(key) {
+      sender.send_if_modified(|in_place_versionstamp| {
+        if *in_place_versionstamp < versionstamp {
+          *in_place_versionstamp = versionstamp;
+          true
+        } else {
+          false
+        }
+      });
+    }
+  }
+
+  /// Subscribe to a given key. The returned subscription can be used to get
+  /// updated whenever the key is updated past a given versionstamp.
+  fn subscribe(&self, key: Vec<u8>) -> SqliteKeySubscription {
+    let mut key_watchers = self.0.key_watchers.write().unwrap();
+    let receiver = match key_watchers.entry(key.clone()) {
+      Entry::Occupied(entry) => entry.get().subscribe(),
+      Entry::Vacant(entry) => {
+        let (sender, receiver) = watch::channel([0; 10]);
+        entry.insert(sender);
+        receiver
+      }
+    };
+    SqliteKeySubscription {
+      notifier: Arc::downgrade(&self.0),
+      key: Some(key),
+      receiver,
+    }
+  }
+}
+
+impl SqliteKeySubscription {
+  /// Wait until the key has been updated since the given versionstamp.
+  ///
+  /// Returns false if the database is closing. Returns true if the key has been
+  /// updated.
+  async fn wait_until_updated(
+    &mut self,
+    last_read_versionstamp: Versionstamp,
+  ) -> bool {
+    let res = self
+      .receiver
+      .wait_for(|t| *t > last_read_versionstamp)
+      .await;
+    res.is_ok() // Err(_) means the database is closing.
+  }
+}
+
+impl Drop for SqliteKeySubscription {
+  fn drop(&mut self) {
+    if let Some(notifier) = self.notifier.upgrade() {
+      let key = self.key.take().unwrap();
+      let mut key_watchers = notifier.key_watchers.write().unwrap();
+      match key_watchers.entry(key) {
+        Entry::Occupied(entry) => {
+          // If there is only one subscriber left (this struct), then remove
+          // the entry from the map.
+          if entry.get().receiver_count() == 1 {
+            entry.remove();
+          }
+        }
+        Entry::Vacant(_) => unreachable!("the entry should still exist"),
+      }
+    }
+  }
+}
+
 #[derive(Clone)]
 pub struct Sqlite {
   join_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
   shutdown_notify: Arc<Notify>,
   request_tx: tokio::sync::mpsc::Sender<SqliteRequest>,
+  notifier: SqliteNotifier,
 }
 
 impl Sqlite {
   pub fn new(
     conn: rusqlite::Connection,
-    dequeue_notify: Arc<Notify>,
+    notifier: SqliteNotifier,
     versionstamp_rng: Box<dyn RngCore + Send>,
   ) -> Result<Sqlite, anyhow::Error> {
-    let backend =
-      SqliteBackend::new(conn, dequeue_notify.clone(), versionstamp_rng)?;
+    let backend = SqliteBackend::new(conn, notifier.clone(), versionstamp_rng)?;
     let shutdown_notify = Arc::new(Notify::new());
     let (request_tx, request_rx) = tokio::sync::mpsc::channel(1);
     let shutdown_notify_ = shutdown_notify.clone();
@@ -92,17 +199,13 @@ impl Sqlite {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(sqlite_thread(
-          backend,
-          shutdown_notify_,
-          dequeue_notify,
-          request_rx,
-        ));
+        .block_on(sqlite_thread(backend, shutdown_notify_, request_rx));
     });
     Ok(Self {
       join_handle: Arc::new(Mutex::new(Some(join_handle))),
       shutdown_notify,
       request_tx,
+      notifier,
     })
   }
 }
@@ -110,7 +213,6 @@ impl Sqlite {
 async fn sqlite_thread(
   mut backend: SqliteBackend,
   shutdown_notify: Arc<Notify>,
-  dequeue_notify: Arc<Notify>,
   mut request_rx: tokio::sync::mpsc::Receiver<SqliteRequest>,
 ) {
   let start = utc_now();
@@ -173,7 +275,7 @@ async fn sqlite_thread(
       _ = shutdown_notify.notified() => {
         break;
       },
-      _ = dequeue_notify.notified(), if !dequeue_channels.is_empty() => {
+      _ = backend.notifier.0.dequeue_notify.notified(), if !dequeue_channels.is_empty() => {
         let queue_next_ready = match backend.queue_next_ready() {
           Ok(queue_next_ready) => queue_next_ready,
           Err(err) => panic!("KV queue_next_ready failed: {err}"),
@@ -282,9 +384,10 @@ impl Sqlite {
       })
       .await
       .map_err(|_| anyhow::anyhow!("Database is closed."))?;
-    receiver
+    let (ranges, _current_versionstamp) = receiver
       .await
-      .map_err(|_| anyhow::anyhow!("Database is closed."))?
+      .map_err(|_| anyhow::anyhow!("Database is closed."))??;
+    Ok(ranges)
   }
 
   pub async fn atomic_write(
@@ -318,6 +421,66 @@ impl Sqlite {
       payload: Some(dequeued_message.payload),
       request_tx: self.request_tx.clone(),
     }))
+  }
+
+  pub fn watch(
+    &self,
+    keys: Vec<Vec<u8>>,
+  ) -> Pin<
+    Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, anyhow::Error>> + Send>,
+  > {
+    let requests = keys
+      .iter()
+      .map(|key| ReadRange {
+        end: key.iter().copied().chain(Some(0)).collect(),
+        start: key.clone(),
+        limit: NonZeroU32::new(1).unwrap(),
+        reverse: false,
+      })
+      .collect::<Vec<_>>();
+    let options = SnapshotReadOptions {
+      consistency: denokv_proto::Consistency::Eventual,
+    };
+    let this = self.clone();
+    let stream = try_stream! {
+      let mut subscriptions: Vec<SqliteKeySubscription> = Vec::new();
+      for key in keys {
+        subscriptions.push(this.notifier.subscribe(key));
+      }
+
+      loop {
+        let (sender, receiver) = oneshot::channel();
+        let res = this
+          .request_tx
+          .send(SqliteRequest::SnapshotRead {
+            requests: requests.clone(),
+            options: options.clone(),
+            sender,
+          })
+          .await;
+        if res.is_err() {
+          return; // database is closing
+        }
+        let Some(res) = receiver.await.ok() else {
+          return; // database is closing
+        };
+        let (ranges, current_versionstamp) = res?;
+        let mut outputs = Vec::new();
+        for range in ranges {
+          let entry = range.entries.into_iter().next();
+          outputs.push(WatchKeyOutput::Changed { entry });
+        }
+        yield outputs;
+
+        let futures = subscriptions.iter_mut().map(|subscription| {
+          Box::pin(subscription.wait_until_updated(current_versionstamp))
+        });
+        if !futures::future::select_all(futures).await.0 {
+          return; // database is closing
+        }
+      }
+    };
+    Box::pin(stream)
   }
 
   pub fn close(&self) {
@@ -356,6 +519,14 @@ impl Database for Sqlite {
     &self,
   ) -> Result<Option<Self::QMH>, anyhow::Error> {
     Sqlite::dequeue_next_message(self).await
+  }
+
+  fn watch(
+    &self,
+    keys: Vec<Vec<u8>>,
+  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, anyhow::Error>>>>
+  {
+    Sqlite::watch(self, keys)
   }
 
   fn close(&self) {

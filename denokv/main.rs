@@ -9,6 +9,7 @@ use aws_smithy_types::retry::RetryConfig;
 use axum::async_trait;
 use axum::body::Body;
 use axum::body::Bytes;
+use axum::body::StreamBody;
 use axum::debug_handler;
 use axum::extract::FromRequest;
 use axum::extract::State;
@@ -45,9 +46,14 @@ use denokv_proto::ReadRange;
 use denokv_proto::SnapshotReadOptions;
 use denokv_sqlite::Connection;
 use denokv_sqlite::Sqlite;
+use denokv_sqlite::SqliteNotifier;
 use denokv_timemachine::backup_source_s3::DatabaseBackupSourceS3;
 use denokv_timemachine::backup_source_s3::DatabaseBackupSourceS3Config;
 use denokv_timemachine::time_travel::TimeTravelControl;
+use futures::stream::unfold;
+use futures::stream_select;
+use futures::StreamExt;
+use futures::TryStreamExt;
 use hyper::client::HttpConnector;
 use hyper_proxy::Intercept;
 use hyper_proxy::Proxy;
@@ -55,13 +61,14 @@ use hyper_proxy::ProxyConnector;
 use log::error;
 use log::info;
 use prost::DecodeError;
+use prost::Message;
 use rand::Rng;
 use rand::SeedableRng;
 use rusqlite::OpenFlags;
 use std::env;
 use thiserror::Error;
 use tokio::sync::oneshot;
-use tokio::sync::Notify;
+use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
 use crate::config::PitrSubCmd;
@@ -221,6 +228,7 @@ async fn run_serve(
   let v1 = Router::new()
     .route("/snapshot_read", post(snapshot_read_endpoint))
     .route("/atomic_write", post(atomic_write_endpoint))
+    .route("/watch", post(watch_endpoint))
     .route_layer(middleware::from_fn_with_state(
       state.clone(),
       authentication_middleware,
@@ -327,10 +335,10 @@ fn open_sqlite(
       | OpenFlags::SQLITE_OPEN_NO_MUTEX
   };
   let conn = Connection::open_with_flags(path, flags)?;
-  let notify = Arc::new(Notify::new());
+  let notifier = SqliteNotifier::default();
   let rng: Box<_> = Box::new(rand::rngs::StdRng::from_entropy());
   let path = conn.path().unwrap().to_owned();
-  let sqlite = Sqlite::new(conn, notify, rng)?;
+  let sqlite = Sqlite::new(conn, notifier, rng)?;
   Ok((sqlite, path))
 }
 
@@ -461,6 +469,35 @@ async fn atomic_write_endpoint(
   }
 }
 
+async fn watch_endpoint(
+  State(state): State<AppState>,
+  Protobuf(watch): Protobuf<pb::Watch>,
+) -> Result<impl IntoResponse, ApiError> {
+  let keys = watch.try_into()?;
+
+  let watcher = state.sqlite.watch(keys);
+
+  let data_stream = watcher.map_ok(|outs| {
+    let output = pb::WatchOutput::from(outs);
+    let bytes = output.encode_to_vec();
+    bytes
+  });
+
+  let mut timer = tokio::time::interval(std::time::Duration::from_secs(5));
+  timer.set_missed_tick_behavior(MissedTickBehavior::Delay);
+  let ping_stream = unfold(timer, |mut timer| async move {
+    timer.tick().await;
+    Some((Ok::<_, anyhow::Error>(vec![]), timer))
+  })
+  .boxed();
+
+  let body_stream = stream_select!(data_stream, ping_stream).map_ok(|data| {
+    Bytes::from([&(data.len() as u32).to_le_bytes()[..], &data[..]].concat())
+  });
+
+  Ok(StreamBody::new(body_stream))
+}
+
 #[debug_handler]
 async fn fallback_handler() -> ApiError {
   ApiError::NotFound
@@ -490,6 +527,8 @@ enum ApiError {
   AtomicWriteTooLarge,
   #[error("Too many read ranges requested in one read request.")]
   TooManyReadRanges,
+  #[error("Too many keys watched in a single watch request.")]
+  TooManyWatchedKeys,
   #[error("Too many checks included in atomic write.")]
   TooManyChecks,
   #[error("Too many mutations / enqueues included in atomic write.")]
@@ -532,6 +571,7 @@ impl ApiError {
       ApiError::ReadRangeTooLarge => StatusCode::BAD_REQUEST,
       ApiError::AtomicWriteTooLarge => StatusCode::BAD_REQUEST,
       ApiError::TooManyReadRanges => StatusCode::BAD_REQUEST,
+      ApiError::TooManyWatchedKeys => StatusCode::BAD_REQUEST,
       ApiError::TooManyChecks => StatusCode::BAD_REQUEST,
       ApiError::TooManyMutations => StatusCode::BAD_REQUEST,
       ApiError::TooManyQueueUndeliveredKeys => StatusCode::BAD_REQUEST,
@@ -563,6 +603,7 @@ impl From<ConvertError> for ApiError {
       ConvertError::ReadRangeTooLarge => ApiError::ReadRangeTooLarge,
       ConvertError::AtomicWriteTooLarge => ApiError::AtomicWriteTooLarge,
       ConvertError::TooManyReadRanges => ApiError::TooManyReadRanges,
+      ConvertError::TooManyWatchedKeys => ApiError::TooManyWatchedKeys,
       ConvertError::TooManyChecks => ApiError::TooManyChecks,
       ConvertError::TooManyMutations => ApiError::TooManyMutations,
       ConvertError::TooManyQueueUndeliveredKeys => {

@@ -81,6 +81,7 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
   (child, addr)
 }
 
+#[derive(Clone)]
 struct DummyPermissions;
 
 impl denokv_remote::RemotePermissions for DummyPermissions {

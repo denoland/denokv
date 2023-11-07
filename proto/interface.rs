@@ -3,10 +3,12 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::num::NonZeroU32;
+use std::pin::Pin;
 
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
+use futures::Stream;
 use num_bigint::BigInt;
 use serde::Deserialize;
 use serde::Serialize;
@@ -14,8 +16,11 @@ use uuid::Uuid;
 
 use crate::codec::canonicalize_f64;
 
+pub type WatchStream =
+  Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, anyhow::Error>>>>;
+
 #[async_trait(?Send)]
-pub trait Database {
+pub trait Database: Clone + Sized {
   type QMH: QueueMessageHandle + 'static;
 
   async fn snapshot_read(
@@ -32,6 +37,8 @@ pub trait Database {
   async fn dequeue_next_message(
     &self,
   ) -> Result<Option<Self::QMH>, anyhow::Error>;
+
+  fn watch(&self, keys: Vec<Vec<u8>>) -> WatchStream;
 
   fn close(&self);
 }
@@ -53,6 +60,7 @@ impl QueueMessageHandle for Box<dyn QueueMessageHandle> {
 }
 
 /// Options for a snapshot read.
+#[derive(Clone)]
 pub struct SnapshotReadOptions {
   pub consistency: Consistency,
 }
@@ -152,6 +160,7 @@ impl PartialOrd for KeyPart {
 /// not be greater than the end.
 ///
 /// The range is limited to `limit` number of entries.
+#[derive(Clone)]
 pub struct ReadRange {
   pub start: Vec<u8>,
   pub end: Vec<u8>,
@@ -166,7 +175,7 @@ pub struct ReadRangeOutput {
 
 /// A versionstamp is a 10 byte array that is used to represent the version of
 /// a key in the database.
-type Versionstamp = [u8; 10];
+pub type Versionstamp = [u8; 10];
 
 /// A key-value entry with a versionstamp.
 pub struct KvEntry {
@@ -328,6 +337,14 @@ impl MutationKind {
 pub struct CommitResult {
   /// The new versionstamp of the data that was committed.
   pub versionstamp: Versionstamp,
+}
+
+/// The message notifying about the status of a single key in a watch request.
+pub enum WatchKeyOutput {
+  /// The key has not changed since the last delivery. Deliver the entry.
+  Unchanged,
+  /// The key has changed since the last delivery. Deliver the new entry.
+  Changed { entry: Option<KvEntry> },
 }
 
 #[derive(Serialize, Deserialize)]

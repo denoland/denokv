@@ -1,7 +1,6 @@
 // Copyright 2023 the Deno authors. All rights reserved. MIT license.
 
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -18,6 +17,7 @@ use denokv_proto::MutationKind;
 use denokv_proto::ReadRange;
 use denokv_proto::ReadRangeOutput;
 use denokv_proto::SnapshotReadOptions;
+use denokv_proto::Versionstamp;
 use denokv_proto::VALUE_ENCODING_V8;
 use rand::Rng;
 use rand::RngCore;
@@ -28,9 +28,12 @@ use rusqlite::Transaction;
 use uuid::Uuid;
 
 use crate::time::utc_now;
+use crate::SqliteNotifier;
 
 const STATEMENT_INC_AND_GET_DATA_VERSION: &str =
   "update data_version set version = version + ? where k = 0 returning version";
+const STATEMENT_GET_DATA_VERSION: &str =
+  "select version from data_version where k = 0";
 const STATEMENT_KV_RANGE_SCAN: &str =
   "select k, v, v_encoding, version from kv where k >= ? and k < ? order by k asc limit ?";
 const STATEMENT_KV_RANGE_SCAN_REVERSE: &str =
@@ -44,7 +47,7 @@ const STATEMENT_KV_POINT_SET: &str =
 const STATEMENT_KV_POINT_DELETE: &str = "delete from kv where k = ?";
 
 const STATEMENT_DELETE_ALL_EXPIRED: &str =
-  "delete from kv where expiration_ms >= 0 and expiration_ms <= ?";
+  "delete from kv where expiration_ms >= 0 and expiration_ms <= ? returning k";
 const STATEMENT_EARLIEST_EXPIRATION: &str =
   "select expiration_ms from kv where expiration_ms >= 0 order by expiration_ms limit 1";
 
@@ -138,7 +141,7 @@ impl std::error::Error for TypeError {}
 pub struct SqliteBackend {
   conn: rusqlite::Connection,
   rng: Box<dyn RngCore + Send>,
-  pub dequeue_notify: Arc<tokio::sync::Notify>,
+  pub notifier: SqliteNotifier,
   pub messages_running: HashSet<QueueMessageId>,
   pub readonly: bool,
 }
@@ -163,14 +166,14 @@ impl SqliteBackend {
 
   pub fn new(
     conn: rusqlite::Connection,
-    dequeue_notify: Arc<tokio::sync::Notify>,
+    notifier: SqliteNotifier,
     rng: Box<dyn RngCore + Send>,
   ) -> Result<Self, anyhow::Error> {
     let readonly = conn.is_readonly(DatabaseName::Main)?;
     let mut this = Self {
       conn,
       rng,
-      dequeue_notify,
+      notifier,
       messages_running: HashSet::new(),
       readonly,
     };
@@ -213,7 +216,7 @@ impl SqliteBackend {
     &mut self,
     requests: Vec<ReadRange>,
     _options: SnapshotReadOptions,
-  ) -> Result<Vec<ReadRangeOutput>, anyhow::Error> {
+  ) -> Result<(Vec<ReadRangeOutput>, Versionstamp), anyhow::Error> {
     self.run_tx(|tx, _| {
       let mut responses = Vec::with_capacity(requests.len());
       for request in &*requests {
@@ -245,7 +248,12 @@ impl SqliteBackend {
         responses.push(ReadRangeOutput { entries });
       }
 
-      Ok(responses)
+      let version = tx
+        .prepare_cached(STATEMENT_GET_DATA_VERSION)?
+        .query_row([], |row| row.get(0))?;
+      let versionstamp = version_to_versionstamp(version);
+
+      Ok((responses, versionstamp))
     })
   }
 
@@ -352,7 +360,15 @@ impl SqliteBackend {
     })?;
 
     if has_enqueues {
-      self.dequeue_notify.notify_one();
+      self.notifier.schedule_dequeue();
+    }
+
+    if let Some(commit_result) = &commit_result {
+      for mutation in &write.mutations {
+        self
+          .notifier
+          .notify_key_update(&mutation.key, commit_result.versionstamp);
+      }
     }
 
     Ok(commit_result)
@@ -378,7 +394,7 @@ impl SqliteBackend {
 
   pub fn queue_cleanup(&mut self) -> Result<(), anyhow::Error> {
     let now = utc_now();
-    let queue_dequeue_waker = self.dequeue_notify.clone();
+    let notifier = self.notifier.clone();
     loop {
       let done = self.run_tx(|tx, rng| {
         let entries = tx
@@ -390,7 +406,7 @@ impl SqliteBackend {
           .collect::<Result<Vec<_>, rusqlite::Error>>()?;
         for id in &entries {
           if requeue_message(rng, tx, id, now)? {
-            queue_dequeue_waker.notify_one();
+            notifier.schedule_dequeue();
           }
         }
         Ok(entries.is_empty())
@@ -507,7 +523,7 @@ impl SqliteBackend {
       Ok(requeued)
     })?;
     if requeued {
-      self.dequeue_notify.notify_one();
+      self.notifier.schedule_dequeue();
     }
     Ok(())
   }
@@ -516,9 +532,22 @@ impl SqliteBackend {
     &mut self,
   ) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
     let now = utc_now();
-    self.run_tx(|tx, _| {
-      tx.prepare_cached(STATEMENT_DELETE_ALL_EXPIRED)?
-        .execute(params![now.timestamp_millis()])?;
+    let (earliest_expiration, deleted_keys) = self.run_tx(|tx, _| {
+      let deleted_keys = tx
+        .prepare_cached(STATEMENT_DELETE_ALL_EXPIRED)?
+        .query_map(params![now.timestamp_millis()], |row| {
+          row.get::<_, Vec<u8>>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+      let new_versionstamp = if !deleted_keys.is_empty() {
+        let version = tx
+          .prepare_cached(STATEMENT_INC_AND_GET_DATA_VERSION)?
+          .query_row([1], |row| row.get(0))?;
+        Some(version_to_versionstamp(version))
+      } else {
+        None
+      };
+      let deleted_keys = new_versionstamp.map(|nv| (nv, deleted_keys));
       let earliest_expiration_ms: Option<u64> = tx
         .prepare_cached(STATEMENT_EARLIEST_EXPIRATION)?
         .query_row(params![], |row| {
@@ -526,11 +555,20 @@ impl SqliteBackend {
           Ok(expiration_ms)
         })
         .optional()?;
-      Ok(
+      Ok((
         earliest_expiration_ms
           .map(|x| DateTime::UNIX_EPOCH + Duration::from_millis(x)),
-      )
-    })
+        deleted_keys,
+      ))
+    })?;
+
+    if let Some((versionstamp, deleted_keys)) = deleted_keys {
+      for key in deleted_keys {
+        self.notifier.notify_key_update(&key, versionstamp);
+      }
+    }
+
+    Ok(earliest_expiration)
   }
 }
 
@@ -693,7 +731,7 @@ fn mutate_le64(
   Ok(())
 }
 
-fn version_to_versionstamp(version: i64) -> [u8; 10] {
+fn version_to_versionstamp(version: i64) -> Versionstamp {
   let mut versionstamp = [0; 10];
   versionstamp[..8].copy_from_slice(&version.to_be_bytes());
   versionstamp

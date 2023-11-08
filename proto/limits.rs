@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 pub const MAX_WRITE_KEY_SIZE_BYTES: usize = 2048;
 pub const MAX_READ_KEY_SIZE_BYTES: usize = MAX_WRITE_KEY_SIZE_BYTES + 1;
 pub const MAX_VALUE_SIZE_BYTES: usize = 65536;

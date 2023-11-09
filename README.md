@@ -104,7 +104,7 @@ app = "<your-app-name>"
 primary_region = "<region>"
 
 [build]
-  image = "denoland/denokv:latest"
+  image = "ghcr.io/denoland/denokv:latest"
 
 [http_service]
   internal_port = 4512

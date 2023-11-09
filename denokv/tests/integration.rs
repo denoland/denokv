@@ -32,6 +32,7 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
   let mut child = tokio::process::Command::new(denokv_exe())
     .arg("--sqlite-path")
     .arg(tmp_file)
+    .arg("serve")
     .arg("--addr")
     .arg("127.0.0.1:0")
     .env("DENO_KV_ACCESS_TOKEN", ACCESS_TOKEN)

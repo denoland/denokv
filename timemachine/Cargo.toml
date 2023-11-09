@@ -1,0 +1,31 @@
+[package]
+name = "denokv_timemachine"
+description = "Point-in-time recovery tool for Deno KV"
+version = "0.2.1"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+aws-config.workspace = true
+aws-credential-types.workspace = true
+aws-sdk-s3.workspace = true
+aws-smithy-async.workspace = true
+aws-smithy-types.workspace = true
+aws-types.workspace = true
+chrono.workspace = true
+clap.workspace = true
+denokv_proto.workspace = true
+futures.workspace = true
+hex.workspace = true
+prost.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-futures.workspace = true
+tracing-subscriber.workspace = true

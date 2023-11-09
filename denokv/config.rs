@@ -36,7 +36,7 @@ pub struct ServeOptions {
   pub read_only: bool,
 
   /// Sync changes from S3 continuously.
-  #[clap(long)]
+  #[clap(long, conflicts_with = "read_only")]
   pub sync_from_s3: bool,
 
   #[command(flatten)]

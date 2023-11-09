@@ -68,6 +68,9 @@ use crate::config::PitrSubCmd;
 
 mod config;
 
+const SYNC_INTERVAL_BASE_MS: u64 = 10000;
+const SYNC_INTERVAL_JITTER_MS: u64 = 5000;
+
 #[derive(Clone)]
 struct AppState {
   sqlite: Sqlite,
@@ -84,10 +87,6 @@ async fn main() -> Result<(), anyhow::Error> {
 
   match &config.subcommand {
     SubCmd::Serve(options) => {
-      if options.read_only && options.sync_from_s3 {
-        anyhow::bail!("Cannot sync from S3 in read-only mode.");
-      }
-
       let (initial_sync_ok_tx, initial_sync_ok_rx) = oneshot::channel();
 
       let sync_fut = async move {
@@ -207,9 +206,9 @@ async fn run_serve(
   let read_only = options.read_only || options.sync_from_s3;
   let (sqlite, path) = open_sqlite(path, read_only)?;
   info!(
-    "Opened database at {}, mode={}",
+    "Opened{} database at {}",
+    if read_only { " read only" } else { "" },
     path,
-    if read_only { "ro" } else { "rw" }
   );
 
   let access_token = options.access_token.as_str();
@@ -309,7 +308,8 @@ async fn run_sync(
     ttc.checkout([0xffu8; 10])?;
 
     let sleep_duration = std::time::Duration::from_millis(
-      10000 + rand::thread_rng().gen_range(0..5000),
+      SYNC_INTERVAL_BASE_MS
+        + rand::thread_rng().gen_range(0..SYNC_INTERVAL_JITTER_MS),
     );
     tokio::time::sleep(sleep_duration).await;
   }

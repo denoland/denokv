@@ -16,3 +16,4 @@ LABEL org.opencontainers.image.licenses=MIT
 COPY --from=builder /usr/src/denokv/target/release/denokv /usr/local/bin/
 
 ENTRYPOINT ["/usr/local/bin/denokv"]
+CMD ["serve"]

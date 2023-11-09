@@ -17,6 +17,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+      fail-fast: false
 
     steps:
       - uses: actions/checkout@v3
@@ -30,7 +31,7 @@ jobs:
         uses: arduino/setup-protoc@v2
         with:
           version: "21.12"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check formatting
         run: cargo fmt -- --check
@@ -102,4 +103,5 @@ jobs:
           cargo publish -vv -p denokv_proto
           cargo publish -vv -p denokv_sqlite
           cargo publish -vv -p denokv_remote
+          cargo publish -vv -p denokv_timemachine
           cargo publish -vv -p denokv

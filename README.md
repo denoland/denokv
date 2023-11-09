@@ -69,7 +69,7 @@ Then run the `denokv` Docker image, mounting the `/data` directory as a volume
 and specifying a random access token.
 
 ```sh
-docker run -it --init -p 4512:4512 -v ./data:/data ghcr.io/denoland/denokv --sqlite-path /data/denokv.sqlite serve --access-token <random-token>
+docker run -it --init -p 4512:4512 -v ./data:/data ghcr.io/denoland/denokv serve --sqlite-path /data/denokv.sqlite --access-token <random-token>
 ```
 
 You can now access the database from your Deno programs by specifying the access
@@ -142,6 +142,14 @@ period of inactivity will be slow, as the database needs to be started. You can
 avoid this by setting `min_machines_running` to `1`, and setting
 `auto_stop_machines = false`.
 
+### Install binary
+
+You can download a prebuilt binary from the
+[releases page](https://github.com/denoland/denokv/releases/tag/0.1.0) and place
+it in your `PATH`.
+
+You can also compile from source by running `cargo install denokv --locked`.
+
 ## How to connect
 
 ### Deno
@@ -155,9 +163,14 @@ const kv = await Deno.openKv("http://localhost:4512");
 Make sure to specify your access token in the `DENO_KV_ACCESS_TOKEN` environment
 variable.
 
-## Running as a replica of a hosted KV database
+<!-- TBD: ### Node.js -->
 
-`denokv` has a mode for running as a replica of a KV database hosted on Deno Deploy through the S3 backup feature.
+## Advanced setup
+
+### Running as a replica of a hosted KV database
+
+`denokv` has a mode for running as a replica of a KV database hosted on Deno
+Deploy through the S3 backup feature.
 
 To run as a replica:
 
@@ -187,10 +200,6 @@ To checkout the snapshot at a specific recoverable point:
 ```sh
 denokv --sqlite-path /data/denokv.sqlite pitr checkout 0100000002c0f4c10000
 ```
-
-<!-- TBD: ### Node.js -->
-
-## Advanced setup
 
 ### Continuous backup using LiteFS
 

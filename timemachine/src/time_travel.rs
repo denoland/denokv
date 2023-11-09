@@ -194,8 +194,6 @@ impl TimeTravelControl {
     }
 
     // Step 2: Pull snapshot ranges that are not yet pulled
-    // Ranges must be pulled in order of (format_version, monoseq, seq) so that
-    // incremental compaction works correctly
     {
       let mut incoming =
         futures::stream::iter(ranges.iter().filter(|x| !x.pulled).map(|x| {
@@ -251,8 +249,10 @@ impl TimeTravelControl {
       }
     }
 
-    // Step 3: Fetch REDO logs until DV is reached and we are up to date as measured
-    // in real time
+    // Step 3: Fetch REDO logs until DV is reached and one of the following conditions hold:
+    // - the (real) timestamp of the current log entry is greater than the time at which log
+    //   fetching starts
+    // - the end of logs has been reached
     let start_ts = SystemTime::now()
       .duration_since(SystemTime::UNIX_EPOCH)
       .unwrap()

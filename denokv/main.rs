@@ -25,7 +25,6 @@ use axum::Router;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::SecondsFormat;
-use chrono::TimeZone;
 use chrono::Utc;
 use clap::Parser;
 use config::Config;
@@ -134,34 +133,31 @@ async fn run_pitr(
       let start = if let Some(start) = &options.start {
         DateTime::parse_from_rfc3339(start)
           .ok()
-          .and_then(|x| u64::try_from(x.timestamp_millis()).ok())
           .with_context(|| format!("invalid start time {:?}", options.start))?
+          .with_timezone(&Utc)
       } else {
-        0
+        Default::default()
       };
       let end = if let Some(end) = &options.end {
-        DateTime::parse_from_rfc3339(end)
-          .ok()
-          .and_then(|x| u64::try_from(x.timestamp_millis()).ok())
-          .with_context(|| format!("invalid end time {:?}", options.end))?
+        Some(
+          DateTime::parse_from_rfc3339(end)
+            .ok()
+            .with_context(|| format!("invalid end time {:?}", options.end))?
+            .with_timezone(&Utc),
+        )
       } else {
-        std::i64::MAX as u64
+        None
       };
       let versionstamps =
         ttc.lookup_versionstamps_around_timestamp(start, end)?;
 
       for (versionstamp, ts) in versionstamps {
-        let ts_chrono = Utc
-          .timestamp_millis_opt(ts as i64)
-          .single()
-          .expect("invalid timestamp");
-
         // Users will want to pipe output of this command into e.g. `less`
         if writeln!(
           &mut std::io::stdout(),
           "{}\t{}",
           hex::encode(versionstamp),
-          ts_chrono.to_rfc3339_opts(SecondsFormat::Millis, true)
+          ts.to_rfc3339_opts(SecondsFormat::Millis, true)
         )
         .is_err()
         {

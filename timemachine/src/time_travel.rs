@@ -6,6 +6,9 @@ use std::time::SystemTime;
 
 use anyhow::Context;
 use anyhow::Result;
+use chrono::DateTime;
+use chrono::TimeZone;
+use chrono::Utc;
 use denokv_proto::backup::BackupKvMutationKind;
 use futures::FutureExt;
 use futures::StreamExt;
@@ -247,9 +250,13 @@ impl TimeTravelControl {
         )?;
         tx.commit()?;
       }
+
+      let ranges = list_initial_snapshot_ranges(&self.db)?;
+      assert!(ranges.iter().all(|x| x.pulled));
     }
 
-    // Step 3: Fetch REDO logs until DV is reached and one of the following conditions hold:
+    // Step 3: Fetch REDO logs and store them in SQLite until DV is reached and one of
+    // the following conditions hold:
     // - the (real) timestamp of the current log entry is greater than the time at which log
     //   fetching starts
     // - the end of logs has been reached
@@ -272,14 +279,26 @@ impl TimeTravelControl {
         return Ok(());
       }
 
-      set_config(
-        &tx,
-        TT_CONFIG_KEY_CURRENT_SNAPSHOT_VERSIONSTAMP12,
-        &hex::encode([0u8; 12]),
-      )?;
       if last_key.is_some() {
+        // If any redo logs were fetched, apply them until `dv` to bring the database to
+        // a consistent state.
+        //
+        // Inverted logs are not written, because states before `dv` are not consistent.
+        set_config(
+          &tx,
+          TT_CONFIG_KEY_CURRENT_SNAPSHOT_VERSIONSTAMP12,
+          &hex::encode([0u8; 12]),
+        )?;
         replay_redo_or_undo_in_tx(&tx, dv, false)?;
+      } else {
+        // Otherwise, no mutations happened during the snapshot period and we are at `dv` now.
+        set_config(
+          &tx,
+          TT_CONFIG_KEY_CURRENT_SNAPSHOT_VERSIONSTAMP12,
+          &hex::encode(dv),
+        )?;
       }
+
       set_config(&tx, TT_CONFIG_KEY_INITIAL_SNAPSHOT_COMPLETED, "1")?;
       tx.commit()?;
     }
@@ -389,9 +408,9 @@ impl TimeTravelControl {
 
   pub fn lookup_versionstamps_around_timestamp(
     &mut self,
-    start: u64,
-    end: u64,
-  ) -> Result<Vec<([u8; 10], u64)>> {
+    start: DateTime<Utc>,
+    end: Option<DateTime<Utc>>,
+  ) -> Result<Vec<([u8; 10], DateTime<Utc>)>> {
     let tx = self.db.transaction()?;
     let mut stmt = tx.prepare_cached(
       "select versionstamp12, timestamp_ms
@@ -401,11 +420,30 @@ impl TimeTravelControl {
       order by versionstamp12 desc",
     )?;
     let mut out = Vec::new();
-    for row in stmt.query_map(rusqlite::params![start, end], |row| {
-      let mut out = [0u8; 10];
-      out.copy_from_slice(&row.get::<_, Vec<u8>>(0)?[0..10]);
-      Ok((out, row.get::<_, u64>(1)?))
-    })? {
+    for row in stmt.query_map(
+      rusqlite::params![
+        start.timestamp_millis(),
+        end.map(|x| x.timestamp_millis()).unwrap_or(std::i64::MAX)
+      ],
+      |row| {
+        let mut versionstamp = [0u8; 10];
+        versionstamp.copy_from_slice(&row.get::<_, Vec<u8>>(0)?[0..10]);
+
+        let timestamp = row.get::<_, i64>(1)?;
+        let chrono_timestamp = Utc
+          .timestamp_millis_opt(timestamp)
+          .single()
+          .ok_or_else(|| {
+            anyhow::anyhow!(
+              "invalid timestamp {} for versionstamp {}",
+              timestamp,
+              hex::encode(versionstamp)
+            )
+          })
+          .unwrap_or_default();
+        Ok((versionstamp, chrono_timestamp))
+      },
+    )? {
       out.push(row?);
     }
 

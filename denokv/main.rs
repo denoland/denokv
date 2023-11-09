@@ -299,6 +299,7 @@ async fn run_sync(
   ttc.ensure_initial_snapshot_completed(&source).await?;
 
   log::info!("Initial snapshot is complete, starting sync.");
+  ttc.checkout([0xffu8; 10])?;
   drop(initial_sync_ok_tx);
 
   loop {
@@ -308,7 +309,7 @@ async fn run_sync(
       return Ok(());
     }
 
-    // In continuous mode, advance snapshot to latest version
+    // In continuous mode, always advance snapshot to latest version
     ttc.checkout([0xffu8; 10])?;
 
     let sleep_duration = std::time::Duration::from_millis(

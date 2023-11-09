@@ -185,7 +185,7 @@ denokv --sqlite-path /data/denokv.sqlite pitr list
 To checkout the snapshot at a specific recoverable point:
 
 ```sh
-denokv --sqlite-path /data/denokv.sqlite checkout 0100000002c0f4c10000
+denokv --sqlite-path /data/denokv.sqlite pitr checkout 0100000002c0f4c10000
 ```
 
 <!-- TBD: ### Node.js -->

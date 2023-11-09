@@ -320,11 +320,11 @@ fn open_sqlite(
   read_only: bool,
 ) -> Result<(Sqlite, String), anyhow::Error> {
   let flags = if read_only {
-    OpenFlags::SQLITE_OPEN_READ_ONLY
-      | OpenFlags::SQLITE_OPEN_NO_MUTEX
-      | OpenFlags::SQLITE_OPEN_URI
+    OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX
   } else {
-    OpenFlags::default()
+    OpenFlags::SQLITE_OPEN_READ_WRITE
+      | OpenFlags::SQLITE_OPEN_CREATE
+      | OpenFlags::SQLITE_OPEN_NO_MUTEX
   };
   let conn = Connection::open_with_flags(path, flags)?;
   let notify = Arc::new(Notify::new());

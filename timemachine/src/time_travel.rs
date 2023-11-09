@@ -99,6 +99,9 @@ const TT_CONFIG_KEY_CURRENT_SNAPSHOT_VERSIONSTAMP12: &str =
 const TT_CONFIG_KEY_S3_BUCKET: &str = "s3_bucket";
 const TT_CONFIG_KEY_S3_PREFIX: &str = "s3_prefix";
 
+const SNAPSHOT_FETCH_CONCURRENCY: usize = 16;
+const LOG_FETCH_CONCURRENCY: usize = 32;
+
 pub struct TimeTravelControl {
   db: rusqlite::Connection,
 }
@@ -204,7 +207,7 @@ impl TimeTravelControl {
             .fetch_snapshot(&x.key)
             .map(|y| y.map(|y| (&x.key, y)))
         }))
-        .buffered(16);
+        .buffered(SNAPSHOT_FETCH_CONCURRENCY);
       while let Some(incoming) = incoming.next().await {
         let (key, range) = incoming?;
         let tx = self.db.transaction()?;
@@ -491,7 +494,7 @@ impl TimeTravelControl {
     .map_ok(|entry| async move {
       source.fetch_log(&entry.key).await.map(|x| (entry, x))
     })
-    .try_buffered(32);
+    .try_buffered(LOG_FETCH_CONCURRENCY);
 
     let mut log_range_stream = std::pin::pin!(log_range_stream.chunks(64));
 

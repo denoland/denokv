@@ -23,10 +23,7 @@ use crate::backup_source_s3::DatabaseBackupSourceS3Config;
 use crate::key_metadata::KeyMetadata;
 
 const MIGRATIONS: [&str; 1] = ["
-create table migration_state(
-  k integer not null primary key,
-  version integer not null
-);
+create view migration_state as select 0 as k, 3 as version;
 create table data_version (
   k integer primary key,
   version integer not null,
@@ -43,7 +40,6 @@ create table kv_snapshot (
 ) without rowid;
 create view kv as
   select k, v, v_encoding, version, seq, expiration_ms from kv_snapshot;
-insert into migration_state (k, version) values (0, 3);
 
 -- REDO/UNDO
 create table tt_redo_log (

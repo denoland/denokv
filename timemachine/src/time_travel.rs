@@ -292,7 +292,7 @@ impl TimeTravelControl {
           TT_CONFIG_KEY_CURRENT_SNAPSHOT_VERSIONSTAMP12,
           &hex::encode([0u8; 12]),
         )?;
-        replay_redo_or_undo_in_tx(&tx, dv, false)?;
+        replay_redo_or_undo(&tx, dv, false)?;
       } else {
         // Otherwise, no mutations happened during the snapshot period and we are at `dv` now.
         set_config(
@@ -387,7 +387,7 @@ impl TimeTravelControl {
     let mut target_versionstamp12: [u8; 12] = [0u8; 12];
     target_versionstamp12[0..10].copy_from_slice(&target_versionstamp[..]);
     target_versionstamp12[10..12].copy_from_slice(&[0xff, 0xff]);
-    replay_redo_or_undo_in_tx(&tx, target_versionstamp12, true)?;
+    replay_redo_or_undo(&tx, target_versionstamp12, true)?;
     tx.commit()?;
     Ok(())
   }
@@ -619,16 +619,15 @@ fn insert_initial_snapshot_ranges(
   Ok(())
 }
 
-fn replay_redo_or_undo_in_tx(
-  conn: &rusqlite::Connection,
+fn replay_redo_or_undo(
+  tx: &rusqlite::Transaction,
   target_versionstamp12: [u8; 12],
   write_inverted: bool,
 ) -> Result<()> {
   let current_versionstamp12 = hex::decode(
-    get_config(conn, TT_CONFIG_KEY_CURRENT_SNAPSHOT_VERSIONSTAMP12)?
-      .ok_or_else(|| {
-        anyhow::anyhow!("current_snapshot_versionstamp12 not found")
-      })?,
+    get_config(tx, TT_CONFIG_KEY_CURRENT_SNAPSHOT_VERSIONSTAMP12)?.ok_or_else(
+      || anyhow::anyhow!("current_snapshot_versionstamp12 not found"),
+    )?,
   )
   .ok()
   .and_then(|x| <[u8; 12]>::try_from(x).ok())
@@ -656,11 +655,11 @@ fn replay_redo_or_undo_in_tx(
   } else {
     "versionstamp12 <= ? order by versionstamp12 desc"
   };
-  let mut stmt_list = conn.prepare_cached(&format!(
+  let mut stmt_list = tx.prepare_cached(&format!(
     "select versionstamp12, timestamp_ms, k, v, v_encoding, real_versionstamp from {} where {}",
     source_table, source_table_select_suffix
   ))?;
-  let mut stmt_delete = conn.prepare_cached(&format!(
+  let mut stmt_delete = tx.prepare_cached(&format!(
     "delete from {} where versionstamp12 = ?",
     source_table
   ))?;
@@ -684,16 +683,10 @@ fn replay_redo_or_undo_in_tx(
     }
 
     if write_inverted {
-      invert_op_in_tx(conn, inverted_table, versionstamp12, timestamp_ms, &k)?;
+      invert_op(tx, inverted_table, versionstamp12, timestamp_ms, &k)?;
     }
 
-    apply_log_entry_in_tx(
-      conn,
-      real_versionstamp,
-      &k,
-      v.as_deref(),
-      v_encoding,
-    )?;
+    apply_log_entry(tx, real_versionstamp, &k, v.as_deref(), v_encoding)?;
     stmt_delete.execute(rusqlite::params![versionstamp12])?;
 
     if is_redo {
@@ -710,7 +703,7 @@ fn replay_redo_or_undo_in_tx(
       anyhow::bail!("redo/undo log did not end at a snapshot boundary");
     }
     set_config(
-      conn,
+      tx,
       TT_CONFIG_KEY_CURRENT_SNAPSHOT_VERSIONSTAMP12,
       &hex::encode(last_versionstamp12),
     )?;
@@ -718,15 +711,15 @@ fn replay_redo_or_undo_in_tx(
   Ok(())
 }
 
-fn apply_log_entry_in_tx(
-  conn: &rusqlite::Connection,
+fn apply_log_entry(
+  tx: &rusqlite::Transaction,
   real_versionstamp: [u8; 10],
   k: &[u8],
   v: Option<&[u8]>,
   v_encoding: i32,
 ) -> Result<()> {
   if let Some(v) = v {
-    conn.prepare_cached("insert into kv_snapshot (k, v, v_encoding, version, seq) values (?, ?, ?, ?, ?) on conflict(k) do update set v = excluded.v, v_encoding = excluded.v_encoding, version = excluded.version, seq = excluded.seq")?.execute(rusqlite::params![
+    tx.prepare_cached("insert into kv_snapshot (k, v, v_encoding, version, seq) values (?, ?, ?, ?, ?) on conflict(k) do update set v = excluded.v, v_encoding = excluded.v_encoding, version = excluded.version, seq = excluded.seq")?.execute(rusqlite::params![
       k,
       v,
       v_encoding,
@@ -734,19 +727,19 @@ fn apply_log_entry_in_tx(
       u16::from_be_bytes(<[u8; 2]>::try_from(&real_versionstamp[8..10]).unwrap()),
     ])?;
   } else {
-    conn.execute("delete from kv_snapshot where k = ?", [k])?;
+    tx.execute("delete from kv_snapshot where k = ?", [k])?;
   }
   Ok(())
 }
 
-fn invert_op_in_tx(
-  conn: &rusqlite::Connection,
+fn invert_op(
+  tx: &rusqlite::Transaction,
   target_table: &str,
   versionstamp12: [u8; 12],
   timestamp_ms: u64,
   k: &[u8],
 ) -> Result<()> {
-  let old_value = conn
+  let old_value = tx
     .query_row(
       "select v, v_encoding, version, seq from kv_snapshot where k = ?",
       [k],
@@ -765,7 +758,7 @@ fn invert_op_in_tx(
     real_versionstamp[0..8].copy_from_slice(&version.to_be_bytes());
     real_versionstamp[8..10].copy_from_slice(&seq.to_be_bytes());
   }
-  conn.execute(
+  tx.execute(
     &format!(
       "insert or ignore into {} (versionstamp12, timestamp_ms, k, v, v_encoding, real_versionstamp) values(?, ?, ?, ?, ?, ?)",
       target_table

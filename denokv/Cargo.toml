@@ -12,16 +12,27 @@ name = "denokv"
 
 [dependencies]
 anyhow.workspace = true
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+aws-smithy-async.workspace = true
+aws-smithy-client.workspace = true
+aws-smithy-types.workspace = true
 axum.workspace = true
 chrono.workspace = true
 clap.workspace = true
 constant_time_eq.workspace = true
 denokv_proto.workspace = true
 denokv_sqlite.workspace = true
+denokv_timemachine.workspace = true
 env_logger.workspace = true
+futures.workspace = true
+hex.workspace = true
+hyper.workspace = true
+hyper-proxy.workspace = true
 log.workspace = true
 prost.workspace = true
 rand.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

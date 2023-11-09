@@ -1,0 +1,38 @@
+// Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
+
+syntax = "proto3";
+
+package com.deno.kv.backup;
+
+message BackupSnapshotRange {
+  repeated BackupKvPair data_list = 1;
+  repeated BackupKvPair metadata_list = 2;
+}
+
+message BackupKvPair {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message BackupMutationRange {
+  repeated BackupReplicationLogEntry entries = 1;
+  uint64 timestamp_ms = 2;
+}
+
+message BackupReplicationLogEntry {
+  bytes versionstamp = 1;
+  BackupKvMutationKind kind = 2;
+  bytes key = 3;
+  bytes value = 4;
+  int32 value_encoding = 5;
+  uint64 expire_at_ms = 6;
+}
+
+enum BackupKvMutationKind {
+  MK_UNSPECIFIED = 0;
+  MK_SET = 1;
+  MK_CLEAR = 2;
+  MK_SUM = 3;
+  MK_MAX = 4;
+  MK_MIN = 5;
+}

@@ -14,7 +14,7 @@ backend.
 To run `denokv`, just run:
 
 ```sh
-docker run -it --init -p 4512:4512 -v ./data:/data ghcr.io/denoland/denokv --sqlite-path /data/denokv.sqlite --access-token <random-token>
+docker run -it --init -p 4512:4512 -v ./data:/data ghcr.io/denoland/denokv --sqlite-path /data/denokv.sqlite serve --access-token <random-token>
 ```
 
 Then run your Deno program and specify the access token in the
@@ -69,7 +69,7 @@ Then run the `denokv` Docker image, mounting the `/data` directory as a volume
 and specifying a random access token.
 
 ```sh
-docker run -it --init -p 4512:4512 -v ./data:/data ghcr.io/denoland/denokv --sqlite-path /data/denokv.sqlite --access-token --access-token <random-token>
+docker run -it --init -p 4512:4512 -v ./data:/data ghcr.io/denoland/denokv --sqlite-path /data/denokv.sqlite serve --access-token <random-token>
 ```
 
 You can now access the database from your Deno programs by specifying the access
@@ -154,6 +154,39 @@ const kv = await Deno.openKv("http://localhost:4512");
 
 Make sure to specify your access token in the `DENO_KV_ACCESS_TOKEN` environment
 variable.
+
+## Running as a replica of a hosted KV database
+
+`denokv` has a mode for running as a replica of a KV database hosted on Deno Deploy through the S3 backup feature.
+
+To run as a replica:
+
+```sh
+docker run -it --init -p 4512:4512 -v ./data:/data \
+  -e AWS_ACCESS_KEY_ID="<aws-access-key-id>" \
+  -e AWS_SECRET_ACCESS_KEY="<aws-secret-access-key>" \
+  -e AWS_REGION="<aws-region>" \
+  ghcr.io/denoland/denokv --sqlite-path /data/denokv.sqlite serve \
+  --access-token <random-token> --sync-from-s3 --s3-bucket your-bucket --s3-prefix some-prefix/6aea9765-2b1e-41c7-8904-0bdcd70b21d3/
+```
+
+To sync the local database from S3, without updating the snapshot:
+
+```sh
+denokv --sqlite-path /data/denokv.sqlite pitr sync --s3-bucket your-bucket --s3-prefix some-prefix/6aea9765-2b1e-41c7-8904-0bdcd70b21d3/
+```
+
+To list recoverable points:
+
+```sh
+denokv --sqlite-path /data/denokv.sqlite pitr list
+```
+
+To checkout the snapshot at a specific recoverable point:
+
+```sh
+denokv --sqlite-path /data/denokv.sqlite checkout 0100000002c0f4c10000
+```
 
 <!-- TBD: ### Node.js -->
 

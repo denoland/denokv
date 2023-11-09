@@ -1,8 +1,11 @@
 use std::borrow::Cow;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
+use aws_smithy_async::rt::sleep::TokioSleep;
+use aws_smithy_types::retry::RetryConfig;
 use axum::async_trait;
 use axum::body::Body;
 use axum::body::Bytes;
@@ -19,9 +22,17 @@ use axum::response::Response;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
+use chrono::DateTime;
 use chrono::Duration;
+use chrono::SecondsFormat;
+use chrono::TimeZone;
+use chrono::Utc;
 use clap::Parser;
 use config::Config;
+use config::PitrOptions;
+use config::ReplicaOptions;
+use config::ServeOptions;
+use config::SubCmd;
 use constant_time_eq::constant_time_eq;
 use denokv_proto::datapath as pb;
 use denokv_proto::time::utc_now;
@@ -35,13 +46,26 @@ use denokv_proto::ReadRange;
 use denokv_proto::SnapshotReadOptions;
 use denokv_sqlite::Connection;
 use denokv_sqlite::Sqlite;
+use denokv_timemachine::backup_source_s3::DatabaseBackupSourceS3;
+use denokv_timemachine::backup_source_s3::DatabaseBackupSourceS3Config;
+use denokv_timemachine::time_travel::TimeTravelControl;
+use hyper::client::HttpConnector;
+use hyper_proxy::Intercept;
+use hyper_proxy::Proxy;
+use hyper_proxy::ProxyConnector;
 use log::error;
 use log::info;
 use prost::DecodeError;
+use rand::Rng;
 use rand::SeedableRng;
+use rusqlite::OpenFlags;
+use std::env;
 use thiserror::Error;
+use tokio::sync::oneshot;
 use tokio::sync::Notify;
 use uuid::Uuid;
+
+use crate::config::PitrSubCmd;
 
 mod config;
 
@@ -53,19 +77,146 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-  let config = Config::parse();
-  std::env::set_var("RUST_LOG", "info");
+  let config: &'static Config = Box::leak(Box::new(Config::parse()));
+  if std::env::var("RUST_LOG").is_err() {
+    std::env::set_var("RUST_LOG", "info");
+  }
   env_logger::init();
 
-  if config.access_token.len() < 12 {
+  match &config.subcommand {
+    SubCmd::Serve(options) => {
+      if options.read_only && options.sync_from_s3 {
+        anyhow::bail!("Cannot sync from S3 in read-only mode.");
+      }
+
+      let (initial_sync_ok_tx, initial_sync_ok_rx) = oneshot::channel();
+
+      let sync_fut = async move {
+        if options.sync_from_s3 {
+          run_sync(config, &options.replica, true, Some(initial_sync_ok_tx))
+            .await
+        } else {
+          drop(initial_sync_ok_tx);
+          futures::future::pending().await
+        }
+        .with_context(|| "Failed to sync from S3")
+      };
+      let serve_fut = async move {
+        drop(initial_sync_ok_rx.await);
+        run_serve(config, options).await
+      };
+
+      let sync_fut = std::pin::pin!(sync_fut);
+      let serve_fut = std::pin::pin!(serve_fut);
+
+      futures::future::try_join(sync_fut, serve_fut).await?;
+    }
+    SubCmd::Pitr(options) => {
+      run_pitr(config, options).await?;
+    }
+  }
+
+  Ok(())
+}
+
+async fn run_pitr(
+  config: &'static Config,
+  options: &'static PitrOptions,
+) -> anyhow::Result<()> {
+  match &options.subcommand {
+    PitrSubCmd::Sync(options) => {
+      run_sync(config, &options.replica, false, None).await?;
+    }
+    PitrSubCmd::List(options) => {
+      let db = rusqlite::Connection::open(&config.sqlite_path)?;
+      let mut ttc = TimeTravelControl::open(db)?;
+
+      let start = if let Some(start) = &options.start {
+        DateTime::parse_from_rfc3339(start)
+          .ok()
+          .and_then(|x| u64::try_from(x.timestamp_millis()).ok())
+          .with_context(|| format!("invalid start time {:?}", options.start))?
+      } else {
+        0
+      };
+      let end = if let Some(end) = &options.end {
+        DateTime::parse_from_rfc3339(end)
+          .ok()
+          .and_then(|x| u64::try_from(x.timestamp_millis()).ok())
+          .with_context(|| format!("invalid end time {:?}", options.end))?
+      } else {
+        std::i64::MAX as u64
+      };
+      let versionstamps =
+        ttc.lookup_versionstamps_around_timestamp(start, end)?;
+
+      for (versionstamp, ts) in versionstamps {
+        let ts_chrono = Utc
+          .timestamp_millis_opt(ts as i64)
+          .single()
+          .expect("invalid timestamp");
+
+        // Users will want to pipe output of this command into e.g. `less`
+        if writeln!(
+          &mut std::io::stdout(),
+          "{}\t{}",
+          hex::encode(versionstamp),
+          ts_chrono.to_rfc3339_opts(SecondsFormat::Millis, true)
+        )
+        .is_err()
+        {
+          break;
+        }
+      }
+    }
+    PitrSubCmd::Info => {
+      let db = rusqlite::Connection::open(&config.sqlite_path)?;
+      let mut ttc = TimeTravelControl::open(db)?;
+
+      let current_versionstamp = ttc.get_current_versionstamp()?;
+      println!(
+        "Current versionstamp: {}",
+        hex::encode(current_versionstamp)
+      );
+    }
+    PitrSubCmd::Checkout(options) => {
+      let db = rusqlite::Connection::open(&config.sqlite_path)?;
+      let mut ttc = TimeTravelControl::open(db)?;
+      let versionstamp = hex::decode(&options.versionstamp)
+        .ok()
+        .and_then(|x| <[u8; 10]>::try_from(x).ok())
+        .with_context(|| {
+          format!("invalid versionstamp {}", options.versionstamp)
+        })?;
+      ttc.checkout(versionstamp)?;
+      let versionstamp = ttc.get_current_versionstamp()?;
+      println!(
+        "Snapshot is now at versionstamp {}",
+        hex::encode(versionstamp)
+      );
+    }
+  }
+  Ok(())
+}
+
+async fn run_serve(
+  config: &'static Config,
+  options: &'static ServeOptions,
+) -> anyhow::Result<()> {
+  if options.access_token.len() < 12 {
     anyhow::bail!("Access token must be at minimum 12 chars long.");
   }
 
   let path = Path::new(&config.sqlite_path);
-  let (sqlite, path) = open_sqlite(path)?;
-  info!("Opened database at {}", path);
+  let read_only = options.read_only || options.sync_from_s3;
+  let (sqlite, path) = open_sqlite(path, read_only)?;
+  info!(
+    "Opened database at {}, mode={}",
+    path,
+    if read_only { "ro" } else { "rw" }
+  );
 
-  let access_token = Box::leak(config.access_token.into_boxed_str());
+  let access_token = options.access_token.as_str();
 
   let state = AppState {
     sqlite,
@@ -86,7 +237,7 @@ async fn main() -> Result<(), anyhow::Error> {
     .fallback(fallback_handler)
     .with_state(state);
 
-  let listener = std::net::TcpListener::bind(config.addr)
+  let listener = std::net::TcpListener::bind(options.addr)
     .context("Failed to start server")?;
   info!("Listening on http://{}", listener.local_addr().unwrap());
 
@@ -97,8 +248,88 @@ async fn main() -> Result<(), anyhow::Error> {
   Ok(())
 }
 
-fn open_sqlite(path: &Path) -> Result<(Sqlite, String), anyhow::Error> {
-  let conn = Connection::open(path)?;
+async fn run_sync(
+  config: &Config,
+  options: &ReplicaOptions,
+  continuous: bool,
+  initial_sync_ok_tx: Option<oneshot::Sender<()>>,
+) -> anyhow::Result<()> {
+  let mut s3_config = aws_config::from_env()
+    .sleep_impl(Arc::new(TokioSleep::new()))
+    .retry_config(RetryConfig::standard().with_max_attempts(std::u32::MAX));
+
+  if let Some(endpoint) = &options.s3_endpoint {
+    s3_config = s3_config.endpoint_url(endpoint);
+  }
+
+  let https_proxy = env::var("https_proxy")
+    .or_else(|_| env::var("HTTPS_PROXY"))
+    .ok();
+  if let Some(https_proxy) = https_proxy {
+    let proxy = {
+      let proxy_uri = https_proxy.parse().unwrap();
+      let proxy = Proxy::new(Intercept::All, proxy_uri);
+      let connector = HttpConnector::new();
+      ProxyConnector::from_proxy(connector, proxy).unwrap()
+    };
+    let hyper_client =
+      aws_smithy_client::hyper_ext::Adapter::builder().build(proxy);
+
+    s3_config = s3_config.http_connector(hyper_client);
+  }
+
+  let s3_config = s3_config.load().await;
+  let s3_client = aws_sdk_s3::Client::new(&s3_config);
+
+  let db = rusqlite::Connection::open(&config.sqlite_path)?;
+  let mut ttc = TimeTravelControl::open(db)?;
+  let s3_config = DatabaseBackupSourceS3Config {
+    bucket: options
+      .s3_bucket
+      .clone()
+      .ok_or_else(|| anyhow::anyhow!("--s3-bucket not set"))?,
+    prefix: options.s3_prefix.clone().unwrap_or_default(),
+  };
+  if !s3_config.prefix.ends_with('/') {
+    anyhow::bail!("--s3-prefix must end with a slash")
+  }
+
+  ttc.init_s3(&s3_config)?;
+  let source = DatabaseBackupSourceS3::new(s3_client, s3_config);
+  ttc.ensure_initial_snapshot_completed(&source).await?;
+
+  log::info!("Initial snapshot is complete, starting sync.");
+  drop(initial_sync_ok_tx);
+
+  loop {
+    ttc.sync(&source).await?;
+
+    if !continuous {
+      return Ok(());
+    }
+
+    // In continuous mode, advance snapshot to latest version
+    ttc.checkout([0xffu8; 10])?;
+
+    let sleep_duration = std::time::Duration::from_millis(
+      10000 + rand::thread_rng().gen_range(0..5000),
+    );
+    tokio::time::sleep(sleep_duration).await;
+  }
+}
+
+fn open_sqlite(
+  path: &Path,
+  read_only: bool,
+) -> Result<(Sqlite, String), anyhow::Error> {
+  let flags = if read_only {
+    OpenFlags::SQLITE_OPEN_READ_ONLY
+      | OpenFlags::SQLITE_OPEN_NO_MUTEX
+      | OpenFlags::SQLITE_OPEN_URI
+  } else {
+    OpenFlags::default()
+  };
+  let conn = Connection::open_with_flags(path, flags)?;
   let notify = Arc::new(Notify::new());
   let rng: Box<_> = Box::new(rand::rngs::StdRng::from_entropy());
   let path = conn.path().unwrap().to_owned();

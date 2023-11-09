@@ -6,7 +6,8 @@ A self-hosted backend for Deno KV, the JavaScript first key-value database:
 - ACID transactions
 - Multiple consistency levels for optimal performance for every usecase
 
-![Diagram showing how a `denokv` setup looks](./diagram.png)
+![Diagram showing how a `denokv` setup looks](./.github/diagram-dark.png#gh-dark-mode-only)
+![Diagram showing how a `denokv` setup looks](./.github/diagram-light.png#gh-light-mode-only)
 
 Deno KV can be used with the built-in single instance database in the CLI,
 useful for testing and development, with a hosted and scalable backend on

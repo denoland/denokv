@@ -1,6 +1,6 @@
 # denokv
 
-A self-hosted backend for Deno KV, the JavaScript first key-value database:
+A self-hosted backend for [Deno KV](https://deno.com/kv), the JavaScript first key-value database:
 
 - Seamlessly integrated JavaScript APIs
 - ACID transactions
@@ -10,7 +10,7 @@ A self-hosted backend for Deno KV, the JavaScript first key-value database:
 ![Diagram showing how a `denokv` setup looks](./.github/diagram-light.png#gh-light-mode-only)
 
 Deno KV can be used with the built-in single instance database in the CLI,
-useful for testing and development, with a hosted and scalable backend on
+useful for testing and development, with a hosted and [scalable backend](https://deno.com/blog/building-deno-kv) on
 [Deno Deploy](https://deno.com/deploy), or with this self-hostable Deno KV
 backend.
 
@@ -30,7 +30,7 @@ const kv = await Deno.openKv("http://localhost:4512");
 The self-hosted `denokv` backend is built on the same robust SQLite backend as
 the built-in single instance database in the CLI. It is designed to be run on a
 VPS or Kubernetes cluster statefully, with Deno processes connecting via the
-network using KV Connect.
+network using [KV Connect](https://docs.deno.com/kv/manual/on_deploy#connect-to-managed-databases-from-outside-of-deno-deploy).
 
 The standalone `denokv` binary is designed to handle thousands of concurrent
 requests, from hundreds of different Deno processes. It is built on top of the
@@ -38,6 +38,8 @@ robust SQLite database, and uses non-blocking IO to ensure excellent performance
 even in the face of hundreds of concurrent connections.
 
 Just like the Deno CLI, `denokv` is MIT licensed, free and open source.
+
+Read more in [the announcement of self-hosted Deno KV](https://deno.com/blog/kv-is-open-source-with-continuous-backup).
 
 ## When should I use this?
 

@@ -351,7 +351,9 @@ async fn metadata_endpoint(
   let Some(Json(req)) = maybe_req else {
     return Err(ApiError::MinumumProtocolVersion);
   };
-  if !req.supported_versions.contains(&2) {
+  if !req.supported_versions.contains(&2)
+    && !req.supported_versions.contains(&3)
+  {
     return Err(ApiError::NoMatchingProtocolVersion);
   }
   let Some(authorization) =
@@ -393,7 +395,7 @@ async fn authentication_middleware(
   else {
     return Err(ApiError::InvalidProtocolVersion);
   };
-  if protocol_version != "2" {
+  if protocol_version != "2" && protocol_version != "3" {
     return Err(ApiError::InvalidProtocolVersion);
   }
   let Some(authorization) = req
@@ -479,8 +481,7 @@ async fn watch_endpoint(
 
   let data_stream = watcher.map_ok(|outs| {
     let output = pb::WatchOutput::from(outs);
-    let bytes = output.encode_to_vec();
-    bytes
+    output.encode_to_vec()
   });
 
   let mut timer = tokio::time::interval(std::time::Duration::from_secs(5));
@@ -553,7 +554,7 @@ enum ApiError {
   InvalidMutationEnqueueDeadline,
   #[error("The server requires at least protocol version 2. Use Deno 1.38.0 or newer.")]
   MinumumProtocolVersion,
-  #[error("The server could not negotiate a protocol version. The server requires protocol version 2.")]
+  #[error("The server could not negotiate a protocol version. The server requires protocol version 2 or 3.")]
   NoMatchingProtocolVersion,
 }
 

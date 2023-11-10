@@ -57,9 +57,11 @@ pub struct MetadataEndpoint {
   pub access_token: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ProtocolVersion {
   V1,
   V2,
+  V3,
 }
 
 #[derive(PartialEq, Eq)]
@@ -130,7 +132,7 @@ impl<P: RemotePermissions> Remote<P> {
     &self,
     method: &'static str,
     req: Req,
-  ) -> Result<Response, anyhow::Error> {
+  ) -> Result<(Response, ProtocolVersion), anyhow::Error> {
     let attempt = 0;
     let req_body = Bytes::from(req.encode_to_vec());
     loop {
@@ -176,6 +178,9 @@ impl<P: RemotePermissions> Remote<P> {
         ProtocolVersion::V2 => req
           .header("x-denokv-database-id", metadata.database_id.to_string())
           .header("x-denokv-version", "2"),
+        ProtocolVersion::V3 => req
+          .header("x-denokv-database-id", metadata.database_id.to_string())
+          .header("x-denokv-version", "3"),
       };
 
       let resp = match req.send().await {
@@ -207,31 +212,34 @@ impl<P: RemotePermissions> Remote<P> {
         }
       };
 
-      return Ok(resp);
+      return Ok((resp, metadata.version));
     }
   }
 
-  pub async fn call_stream<Req: prost::Message>(
+  async fn call_stream<Req: prost::Message>(
     &self,
     method: &'static str,
     req: Req,
-  ) -> Result<impl Stream<Item = Result<Bytes, io::Error>>, anyhow::Error> {
-    let resp = self.call_raw(method, req).await?;
+  ) -> Result<
+    (
+      impl Stream<Item = Result<Bytes, io::Error>>,
+      ProtocolVersion,
+    ),
+    anyhow::Error,
+  > {
+    let (resp, version) = self.call_raw(method, req).await?;
     let stream = resp
       .bytes_stream()
       .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
-    Ok(stream)
+    Ok((stream, version))
   }
 
-  pub async fn call_data<
-    Req: prost::Message,
-    Resp: prost::Message + Default,
-  >(
+  async fn call_data<Req: prost::Message, Resp: prost::Message + Default>(
     &self,
     method: &'static str,
     req: Req,
-  ) -> Result<Resp, anyhow::Error> {
-    let resp = self.call_raw(method, req).await?;
+  ) -> Result<(Resp, ProtocolVersion), anyhow::Error> {
+    let (resp, version) = self.call_raw(method, req).await?;
 
     let resp_body = match resp.bytes().await {
       Ok(resp_body) => resp_body,
@@ -246,7 +254,7 @@ impl<P: RemotePermissions> Remote<P> {
     let resp = Resp::decode(resp_body)
       .context("KV Connect failed to decode response")?;
 
-    Ok(resp)
+    Ok((resp, version))
   }
 }
 
@@ -322,7 +330,7 @@ async fn fetch_metadata(
       format!("Bearer {}", metadata_endpoint.access_token),
     )
     .json(&MetadataExchangeRequest {
-      supported_versions: vec![1, 2],
+      supported_versions: vec![1, 2, 3],
     })
     .send()
     .await
@@ -403,12 +411,13 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
   let version = match version.version {
     1 => ProtocolVersion::V1,
     2 => ProtocolVersion::V2,
+    3 => ProtocolVersion::V3,
     version => {
       return Err(format!("unsupported metadata version: {}", version));
     }
   };
 
-  // V1 and V2 have the same shape
+  // V1, V2, and V3 have the same shape
   let metadata: DatabaseMetadata = match serde_json::from_str(body) {
     Ok(metadata) => metadata,
     Err(err) => {
@@ -420,7 +429,7 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
   for endpoint in metadata.endpoints {
     let url = match version {
       ProtocolVersion::V1 => Url::parse(&endpoint.url),
-      ProtocolVersion::V2 => {
+      ProtocolVersion::V2 | ProtocolVersion::V3 => {
         Url::options().base_url(Some(base_url)).parse(&endpoint.url)
       }
     }
@@ -470,12 +479,30 @@ impl<P: RemotePermissions> Database for Remote<P> {
       .collect();
     let req = pb::SnapshotRead { ranges };
 
-    let res: pb::SnapshotReadOutput =
+    let (res, version): (pb::SnapshotReadOutput, _) =
       self.call_data("snapshot_read", req).await?;
 
-    if res.read_disabled {
-      // TODO: this should result in a retry after a forced metadata refresh.
-      return Err(anyhow::anyhow!("Reads are disabled for this database."));
+    match version {
+      ProtocolVersion::V1 | ProtocolVersion::V2 => {
+        if res.read_disabled {
+          // TODO: this should result in a retry after a forced metadata refresh.
+          return Err(anyhow::anyhow!("Reads are disabled for this database."));
+        }
+      }
+      ProtocolVersion::V3 => match res.status() {
+        pb::SnapshotReadStatus::SrSuccess => {}
+        pb::SnapshotReadStatus::SrReadDisabled => {
+          // TODO: this should result in a retry after a forced metadata refresh.
+          return Err(anyhow::anyhow!("Reads are disabled for this database."));
+        }
+        pb::SnapshotReadStatus::SrUnspecified => {
+          Err(anyhow::anyhow!(
+            "Unspecified read error (code={}).",
+            res.status
+          ))?;
+          unreachable!();
+        }
+      },
     }
 
     if !res.read_is_strongly_consistent
@@ -598,7 +625,7 @@ impl<P: RemotePermissions> Database for Remote<P> {
       enqueues: Vec::new(),
     };
 
-    let res: pb::AtomicWriteOutput =
+    let (res, _): (pb::AtomicWriteOutput, _) =
       self.call_data("atomic_write", req).await?;
 
     match res.status() {
@@ -636,7 +663,7 @@ impl<P: RemotePermissions> Database for Remote<P> {
           keys: keys.iter().map(|key| pb::WatchKey { key: key.clone() }).collect(),
         };
 
-        let stream = this.call_stream("watch", req).await?;
+        let (stream, _) = this.call_stream("watch", req).await?;
         let reader = StreamReader::new(stream);
         let codec = LengthDelimitedCodec::builder()
           .little_endian()

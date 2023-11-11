@@ -595,7 +595,7 @@ impl<T: prost::Message> IntoResponse for Protobuf<T> {
     let body = self.0.encode_to_vec();
     (
       StatusCode::OK,
-      [("content-type", "application/protobuf")],
+      [("content-type", "application/x-protobuf")],
       body,
     )
       .into_response()

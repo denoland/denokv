@@ -825,6 +825,7 @@ dependencies = [
  "rand",
  "rusqlite",
  "serde_json",
+ "thiserror",
  "tokio",
  "uuid",
 ]

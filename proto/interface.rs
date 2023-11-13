@@ -53,6 +53,7 @@ impl QueueMessageHandle for Box<dyn QueueMessageHandle> {
 }
 
 /// Options for a snapshot read.
+#[derive(Debug)]
 pub struct SnapshotReadOptions {
   pub consistency: Consistency,
 }
@@ -152,6 +153,7 @@ impl PartialOrd for KeyPart {
 /// not be greater than the end.
 ///
 /// The range is limited to `limit` number of entries.
+#[derive(Debug)]
 pub struct ReadRange {
   pub start: Vec<u8>,
   pub end: Vec<u8>,
@@ -160,6 +162,7 @@ pub struct ReadRange {
 }
 
 /// A response to a `ReadRange` request.
+#[derive(Debug)]
 pub struct ReadRangeOutput {
   pub entries: Vec<KvEntry>,
 }
@@ -169,6 +172,7 @@ pub struct ReadRangeOutput {
 type Versionstamp = [u8; 10];
 
 /// A key-value entry with a versionstamp.
+#[derive(Debug)]
 pub struct KvEntry {
   pub key: Vec<u8>,
   pub value: KvValue,
@@ -194,6 +198,7 @@ pub struct KvEntry {
 ///
 /// - **Bytes**: an arbitrary byte array.
 /// - **U64**: a 64-bit unsigned integer.
+#[derive(Debug)]
 pub enum KvValue {
   V8(Vec<u8>),
   Bytes(Vec<u8>),
@@ -304,6 +309,7 @@ pub struct Enqueue {
 /// the database must match the type of the value specified in the mutation. If
 /// the key does not exist in the database, then the value specified in the
 /// mutation is used as the new value of the key.
+#[derive(Debug)]
 pub enum MutationKind {
   Set(KvValue),
   Delete,
@@ -325,12 +331,13 @@ impl MutationKind {
 }
 
 /// The result of a successful commit of an atomic write operation.
+#[derive(Debug)]
 pub struct CommitResult {
   /// The new versionstamp of the data that was committed.
   pub versionstamp: Versionstamp,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataExchangeRequest {
   #[serde(default)]
@@ -338,7 +345,7 @@ pub struct MetadataExchangeRequest {
 }
 
 /// The database metadata that is returned by the KV Connect metadata endpoint.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseMetadata {
   pub version: u64,
@@ -349,7 +356,7 @@ pub struct DatabaseMetadata {
 }
 
 /// An endpoint that can be used to connect to the database.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EndpointInfo {
   pub url: Cow<'static, str>,

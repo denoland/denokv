@@ -175,12 +175,11 @@ impl TryFrom<pb::AtomicWrite> for AtomicWrite {
         return Err(ConvertError::ValueTooLong);
       }
       total_payload_size += enqueue.payload.len();
-      if enqueue.kv_keys_if_undelivered.len()
-        > limits::MAX_QUEUE_UNDELIVERED_KEYS
+      if enqueue.keys_if_undelivered.len() > limits::MAX_QUEUE_UNDELIVERED_KEYS
       {
         return Err(ConvertError::TooManyQueueUndeliveredKeys);
       }
-      for key in &enqueue.kv_keys_if_undelivered {
+      for key in &enqueue.keys_if_undelivered {
         if key.len() > limits::MAX_WRITE_KEY_SIZE_BYTES {
           return Err(ConvertError::KeyTooLong);
         }
@@ -215,7 +214,7 @@ impl TryFrom<pb::AtomicWrite> for AtomicWrite {
           Some(enqueue.backoff_schedule)
         },
         deadline,
-        keys_if_undelivered: enqueue.kv_keys_if_undelivered,
+        keys_if_undelivered: enqueue.keys_if_undelivered,
       });
     }
 

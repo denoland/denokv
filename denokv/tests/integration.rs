@@ -192,3 +192,51 @@ async fn no_auth() {
     .await;
   assert!(res.is_err());
 }
+
+#[tokio::test]
+async fn sum_type_mismatch() {
+  let (_child, addr) = start_server().await;
+  let client = reqwest::Client::new();
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
+
+  let metadata_endpoint = denokv_remote::MetadataEndpoint {
+    url,
+    access_token: ACCESS_TOKEN.to_string(),
+  };
+
+  let remote =
+    denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
+  let commit_result = remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Set(denokv_proto::KvValue::Bytes(
+          vec![1, 2, 3],
+        )),
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+  assert_ne!(commit_result.versionstamp, [0; 10]);
+
+  let res = remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum(denokv_proto::KvValue::U64(1)),
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await;
+
+  let err = res.unwrap_err();
+  assert!(err.to_string().contains(
+    "Failed to perform 'sum' mutation on a non-U64 value in the database"
+  ));
+}

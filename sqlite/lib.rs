@@ -373,7 +373,7 @@ pub struct SqliteMessageHandle {
 }
 
 impl SqliteMessageHandle {
-  async fn finish(&self, success: bool) -> Result<(), SqliteBackendError> {
+  pub async fn finish(&self, success: bool) -> Result<(), SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
     self
       .request_tx
@@ -389,7 +389,7 @@ impl SqliteMessageHandle {
       .map_err(|_| SqliteBackendError::DatabaseClosed)?
   }
 
-  async fn take_payload(&mut self) -> Result<Vec<u8>, SqliteBackendError> {
+  pub async fn take_payload(&mut self) -> Result<Vec<u8>, SqliteBackendError> {
     Ok(self.payload.take().expect("can't take payload twice"))
   }
 }

@@ -128,7 +128,7 @@ pub enum SqliteBackendError {
   SqliteError(#[from] rusqlite::Error),
 
   #[error(transparent)]
-  SerdeJsonError(#[from] serde_json::Error),
+  GenericError(#[from] anyhow::Error),
 
   #[error("Database is closed.")]
   DatabaseClosed,
@@ -337,9 +337,11 @@ impl SqliteBackend {
             .backoff_schedule
             .as_deref()
             .or_else(|| Some(&DEFAULT_BACKOFF_SCHEDULE[..])),
-        )?;
+        )
+        .map_err(anyhow::Error::from)?;
         let keys_if_undelivered =
-          serde_json::to_string(&enqueue.keys_if_undelivered)?;
+          serde_json::to_string(&enqueue.keys_if_undelivered)
+            .map_err(anyhow::Error::from)?;
 
         let changed =
           tx.prepare_cached(STATEMENT_QUEUE_ADD_READY)?
@@ -603,7 +605,8 @@ fn requeue_message(
 
   let backoff_schedule = {
     let backoff_schedule =
-      serde_json::from_str::<Option<Vec<u64>>>(&backoff_schedule)?;
+      serde_json::from_str::<Option<Vec<u64>>>(&backoff_schedule)
+        .map_err(anyhow::Error::from)?;
     backoff_schedule.unwrap_or_default()
   };
 
@@ -611,7 +614,8 @@ fn requeue_message(
   if !backoff_schedule.is_empty() {
     // Requeue based on backoff schedule
     let new_ts = now + Duration::from_millis(backoff_schedule[0]);
-    let new_backoff_schedule = serde_json::to_string(&backoff_schedule[1..])?;
+    let new_backoff_schedule = serde_json::to_string(&backoff_schedule[1..])
+      .map_err(anyhow::Error::from)?;
     let changed = tx
       .prepare_cached(STATEMENT_QUEUE_ADD_READY)?
       .execute(params![
@@ -627,7 +631,8 @@ fn requeue_message(
   } else if !keys_if_undelivered.is_empty() {
     // No more requeues. Insert the message into the undelivered queue.
     let keys_if_undelivered =
-      serde_json::from_str::<Vec<Vec<u8>>>(&keys_if_undelivered)?;
+      serde_json::from_str::<Vec<Vec<u8>>>(&keys_if_undelivered)
+        .map_err(anyhow::Error::from)?;
 
     let incrementer_count = rng.gen_range(1..10);
     let version: i64 = tx

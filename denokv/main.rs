@@ -598,8 +598,8 @@ impl From<SqliteBackendError> for ApiError {
         log::error!("Sqlite error: {}", err);
         ApiError::InternalServerError
       }
-      SqliteBackendError::SerdeJsonError(err) => {
-        log::error!("JSON deserialization error: {}", err);
+      SqliteBackendError::GenericError(err) => {
+        log::error!("Generic error: {}", err);
         ApiError::InternalServerError
       }
       SqliteBackendError::DatabaseClosed => ApiError::TryAgain,

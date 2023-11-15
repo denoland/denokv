@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use anyhow::anyhow;
 use chrono::DateTime;
 use chrono::Utc;
 use denokv_proto::decode_value;
@@ -25,6 +24,7 @@ use rusqlite::params;
 use rusqlite::DatabaseName;
 use rusqlite::OptionalExtension;
 use rusqlite::Transaction;
+use thiserror::Error;
 use uuid::Uuid;
 
 use crate::time::utc_now;
@@ -122,21 +122,26 @@ const DEFAULT_BACKOFF_SCHEDULE: [u32; 5] = [100, 1000, 5000, 30000, 60000];
 // processing a message.
 const MESSAGE_DEADLINE_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub struct TypeError(String);
+#[derive(Debug, Error)]
+pub enum SqliteBackendError {
+  #[error(transparent)]
+  SqliteError(#[from] rusqlite::Error),
 
-impl std::fmt::Display for TypeError {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", self.0)
-  }
+  #[error(transparent)]
+  SerdeJsonError(#[from] serde_json::Error),
+
+  #[error("Database is closed.")]
+  DatabaseClosed,
+
+  #[error("Can not write to a read-only database.")]
+  WriteDisabled,
+
+  #[error("The value encoding {0} is unknown.")]
+  UnknownValueEncoding(i64),
+
+  #[error("{0}")]
+  TypeMismatch(String),
 }
-
-impl std::fmt::Debug for TypeError {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", self.0)
-  }
-}
-
-impl std::error::Error for TypeError {}
 
 pub struct SqliteBackend {
   conn: rusqlite::Connection,
@@ -147,12 +152,12 @@ pub struct SqliteBackend {
 }
 
 impl SqliteBackend {
-  fn run_tx<F, R>(&mut self, mut f: F) -> Result<R, anyhow::Error>
+  fn run_tx<F, R>(&mut self, mut f: F) -> Result<R, SqliteBackendError>
   where
     F: FnMut(
       &mut rusqlite::Transaction,
       &mut dyn RngCore,
-    ) -> Result<R, anyhow::Error>,
+    ) -> Result<R, SqliteBackendError>,
   {
     sqlite_retry_loop(move || {
       let mut tx = self.conn.transaction()?;
@@ -216,7 +221,7 @@ impl SqliteBackend {
     &mut self,
     requests: Vec<ReadRange>,
     _options: SnapshotReadOptions,
-  ) -> Result<(Vec<ReadRangeOutput>, Versionstamp), anyhow::Error> {
+  ) -> Result<(Vec<ReadRangeOutput>, Versionstamp), SqliteBackendError> {
     self.run_tx(|tx, _| {
       let mut responses = Vec::with_capacity(requests.len());
       for request in &*requests {
@@ -236,8 +241,9 @@ impl SqliteBackend {
           let key: Vec<u8> = row.get(0)?;
           let value: Vec<u8> = row.get(1)?;
           let encoding: i64 = row.get(2)?;
-          let value = decode_value(value, encoding)
-            .ok_or_else(|| anyhow!("unknown value encoding {encoding}"))?;
+          let value = decode_value(value, encoding).ok_or_else(|| {
+            SqliteBackendError::UnknownValueEncoding(encoding)
+          })?;
           let version: i64 = row.get(3)?;
           entries.push(KvEntry {
             key,
@@ -260,11 +266,9 @@ impl SqliteBackend {
   pub fn atomic_write(
     &mut self,
     write: AtomicWrite,
-  ) -> Result<Option<CommitResult>, anyhow::Error> {
+  ) -> Result<Option<CommitResult>, SqliteBackendError> {
     if self.readonly {
-      return Err(
-        TypeError("Cannot write to a read-only database".to_string()).into(),
-      );
+      return Err(SqliteBackendError::WriteDisabled);
     }
 
     let (has_enqueues, commit_result) = self.run_tx(|tx, rng| {
@@ -374,7 +378,7 @@ impl SqliteBackend {
     Ok(commit_result)
   }
 
-  pub fn queue_running_keepalive(&mut self) -> Result<(), anyhow::Error> {
+  pub fn queue_running_keepalive(&mut self) -> Result<(), SqliteBackendError> {
     let running_messages = self.messages_running.clone();
     let now = utc_now();
     self.run_tx(|tx, _| {
@@ -392,7 +396,7 @@ impl SqliteBackend {
     Ok(())
   }
 
-  pub fn queue_cleanup(&mut self) -> Result<(), anyhow::Error> {
+  pub fn queue_cleanup(&mut self) -> Result<(), SqliteBackendError> {
     let now = utc_now();
     let notifier = self.notifier.clone();
     loop {
@@ -420,8 +424,10 @@ impl SqliteBackend {
 
   pub fn queue_dequeue_message(
     &mut self,
-  ) -> Result<(Option<DequeuedMessage>, Option<DateTime<Utc>>), anyhow::Error>
-  {
+  ) -> Result<
+    (Option<DequeuedMessage>, Option<DateTime<Utc>>),
+    SqliteBackendError,
+  > {
     let now = utc_now();
 
     let can_dispatch = self.messages_running.len() < DISPATCH_CONCURRENCY_LIMIT;
@@ -461,7 +467,7 @@ impl SqliteBackend {
               ])?;
             assert_eq!(changed, 1);
 
-            Ok::<_, anyhow::Error>(Some(DequeuedMessage {
+            Ok::<_, SqliteBackendError>(Some(DequeuedMessage {
               id: QueueMessageId(id),
               payload: data,
             }))
@@ -488,7 +494,7 @@ impl SqliteBackend {
 
   pub fn queue_next_ready(
     &mut self,
-  ) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
+  ) -> Result<Option<DateTime<Utc>>, SqliteBackendError> {
     self.run_tx(|tx, _| {
       let next_ready_ts = tx
         .prepare_cached(STATEMENT_QUEUE_GET_EARLIEST_READY)?
@@ -508,7 +514,7 @@ impl SqliteBackend {
     &mut self,
     id: &QueueMessageId,
     success: bool,
-  ) -> Result<(), anyhow::Error> {
+  ) -> Result<(), SqliteBackendError> {
     let now = utc_now();
     let requeued = self.run_tx(|tx, rng| {
       let requeued = if success {
@@ -530,7 +536,7 @@ impl SqliteBackend {
 
   pub fn collect_expired(
     &mut self,
-  ) -> Result<Option<DateTime<Utc>>, anyhow::Error> {
+  ) -> Result<Option<DateTime<Utc>>, SqliteBackendError> {
     let now = utc_now();
     let (earliest_expiration, deleted_keys) = self.run_tx(|tx, _| {
       let deleted_keys = tx
@@ -577,7 +583,7 @@ fn requeue_message(
   tx: &mut Transaction,
   id: &str,
   now: DateTime<Utc>,
-) -> Result<bool, anyhow::Error> {
+) -> Result<bool, SqliteBackendError> {
   let maybe_message = tx
     .prepare_cached(STATEMENT_QUEUE_GET_RUNNING_BY_ID)?
     .query_row([id], |row| {
@@ -654,23 +660,21 @@ pub struct DequeuedMessage {
 }
 
 pub fn sqlite_retry_loop<R>(
-  mut f: impl FnMut() -> Result<R, anyhow::Error>,
-) -> Result<R, anyhow::Error> {
+  mut f: impl FnMut() -> Result<R, SqliteBackendError>,
+) -> Result<R, SqliteBackendError> {
   loop {
     match f() {
       Ok(x) => return Ok(x),
-      Err(e) => {
-        if let Some(x) = e.downcast_ref::<rusqlite::Error>() {
-          if x.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy) {
-            log::debug!("kv: Database is busy, retrying");
-            std::thread::sleep(Duration::from_millis(
-              rand::thread_rng().gen_range(5..20),
-            ));
-            continue;
-          }
-        }
-        return Err(e);
+      Err(SqliteBackendError::SqliteError(e))
+        if e.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy) =>
+      {
+        log::debug!("kv: Database is busy, retrying");
+        std::thread::sleep(Duration::from_millis(
+          rand::thread_rng().gen_range(5..20),
+        ));
+        continue;
       }
+      Err(err) => return Err(err),
     }
   }
 }
@@ -684,14 +688,11 @@ fn mutate_le64(
   operand: &KvValue,
   new_version: i64,
   mutate: impl FnOnce(u64, u64) -> u64,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), SqliteBackendError> {
   let KvValue::U64(operand) = *operand else {
-    return Err(
-      TypeError(format!(
-        "Failed to perform '{op_name}' mutation on a non-U64 operand"
-      ))
-      .into(),
-    );
+    return Err(SqliteBackendError::TypeMismatch(format!(
+      "Failed to perform '{op_name}' mutation on a non-U64 operand"
+    )));
   };
 
   let old_value = tx
@@ -706,14 +707,14 @@ fn mutate_le64(
   let old_value = match old_value {
     Some((value, encoding)) => Some(
       decode_value(value, encoding)
-        .ok_or_else(|| anyhow!("unknown value encoding {encoding}"))?,
+        .ok_or_else(|| SqliteBackendError::UnknownValueEncoding(encoding))?,
     ),
     None => None,
   };
 
   let new_value = match old_value {
     Some(KvValue::U64(old_value)) => mutate(old_value, operand),
-    Some(_) => return Err(TypeError(format!("Failed to perform '{op_name}' mutation on a non-U64 value in the database")).into()),
+    Some(_) => return Err(SqliteBackendError::TypeMismatch(format!("Failed to perform '{op_name}' mutation on a non-U64 value in the database"))),
     None => operand,
   };
 

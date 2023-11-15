@@ -46,6 +46,7 @@ use denokv_proto::ReadRange;
 use denokv_proto::SnapshotReadOptions;
 use denokv_sqlite::Connection;
 use denokv_sqlite::Sqlite;
+use denokv_sqlite::SqliteBackendError;
 use denokv_sqlite::SqliteNotifier;
 use denokv_timemachine::backup_source_s3::DatabaseBackupSourceS3;
 use denokv_timemachine::backup_source_s3::DatabaseBackupSourceS3Config;
@@ -440,14 +441,7 @@ async fn snapshot_read_endpoint(
     consistency: Consistency::Strong,
   };
 
-  let result_ranges = state
-    .sqlite
-    .snapshot_read(requests, options)
-    .await
-    .map_err(|err| {
-      log::error!("Failed to read from the database: {err}");
-      ApiError::InternalServerError
-    })?;
+  let result_ranges = state.sqlite.snapshot_read(requests, options).await?;
 
   let res = result_ranges.into();
   Ok(Protobuf(res))
@@ -460,15 +454,9 @@ async fn atomic_write_endpoint(
 ) -> Result<Protobuf<pb::AtomicWriteOutput>, ApiError> {
   let atomic_write: AtomicWrite = atomic_write.try_into()?;
 
-  let res = state.sqlite.atomic_write(atomic_write).await;
+  let res = state.sqlite.atomic_write(atomic_write).await?;
 
-  match res {
-    Ok(res) => Ok(Protobuf(res.into())),
-    Err(err) => {
-      error!("Failed to write to database: {}", err);
-      Err(ApiError::InternalServerError)
-    }
-  }
+  Ok(Protobuf(res.into()))
 }
 
 async fn watch_endpoint(
@@ -556,6 +544,15 @@ enum ApiError {
   MinumumProtocolVersion,
   #[error("The server could not negotiate a protocol version. The server requires protocol version 2 or 3.")]
   NoMatchingProtocolVersion,
+  #[error("The server is temporarially unavailable, try again later.")]
+  TryAgain,
+  #[error("This database is read only.")]
+  // TODO: this should not be used (write_disabled should be used instead)
+  ReadOnly,
+  #[error("The value encoding {0} is unknown.")]
+  UnknownValueEncoding(i64),
+  #[error("{0}")]
+  TypeMismatch(String),
 }
 
 impl ApiError {
@@ -586,6 +583,31 @@ impl ApiError {
       ApiError::InvalidMutationEnqueueDeadline => StatusCode::BAD_REQUEST,
       ApiError::MinumumProtocolVersion => StatusCode::BAD_REQUEST,
       ApiError::NoMatchingProtocolVersion => StatusCode::BAD_REQUEST,
+      ApiError::TryAgain => StatusCode::SERVICE_UNAVAILABLE,
+      ApiError::ReadOnly => StatusCode::BAD_REQUEST,
+      ApiError::UnknownValueEncoding(_) => StatusCode::BAD_REQUEST,
+      ApiError::TypeMismatch(_) => StatusCode::BAD_REQUEST,
+    }
+  }
+}
+
+impl From<SqliteBackendError> for ApiError {
+  fn from(value: SqliteBackendError) -> Self {
+    match value {
+      SqliteBackendError::SqliteError(err) => {
+        log::error!("Sqlite error: {}", err);
+        ApiError::InternalServerError
+      }
+      SqliteBackendError::SerdeJsonError(err) => {
+        log::error!("JSON deserialization error: {}", err);
+        ApiError::InternalServerError
+      }
+      SqliteBackendError::DatabaseClosed => ApiError::TryAgain,
+      SqliteBackendError::WriteDisabled => ApiError::ReadOnly,
+      SqliteBackendError::UnknownValueEncoding(encoding) => {
+        ApiError::UnknownValueEncoding(encoding)
+      }
+      SqliteBackendError::TypeMismatch(msg) => ApiError::TypeMismatch(msg),
     }
   }
 }
@@ -637,7 +659,7 @@ impl<T: prost::Message> IntoResponse for Protobuf<T> {
     let body = self.0.encode_to_vec();
     (
       StatusCode::OK,
-      [("content-type", "application/protobuf")],
+      [("content-type", "application/x-protobuf")],
       body,
     )
       .into_response()

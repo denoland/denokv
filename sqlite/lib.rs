@@ -20,7 +20,7 @@ pub use crate::backend::sqlite_retry_loop;
 use crate::backend::DequeuedMessage;
 use crate::backend::QueueMessageId;
 use crate::backend::SqliteBackend;
-pub use crate::backend::TypeError;
+pub use crate::backend::SqliteBackendError;
 use async_stream::try_stream;
 use chrono::DateTime;
 use chrono::Utc;
@@ -65,12 +65,12 @@ enum SqliteRequest {
     requests: Vec<ReadRange>,
     options: SnapshotReadOptions,
     sender: oneshot::Sender<
-      Result<(Vec<ReadRangeOutput>, Versionstamp), anyhow::Error>,
+      Result<(Vec<ReadRangeOutput>, Versionstamp), SqliteBackendError>,
     >,
   },
   AtomicWrite {
     write: AtomicWrite,
-    sender: oneshot::Sender<Result<Option<CommitResult>, anyhow::Error>>,
+    sender: oneshot::Sender<Result<Option<CommitResult>, SqliteBackendError>>,
   },
   QueueDequeueMessage {
     sender: oneshot::Sender<DequeuedMessage>,
@@ -78,7 +78,7 @@ enum SqliteRequest {
   QueueFinishMessage {
     id: QueueMessageId,
     success: bool,
-    sender: oneshot::Sender<Result<(), anyhow::Error>>,
+    sender: oneshot::Sender<Result<(), SqliteBackendError>>,
   },
 }
 
@@ -373,7 +373,7 @@ impl Sqlite {
     &self,
     requests: Vec<ReadRange>,
     options: SnapshotReadOptions,
-  ) -> Result<Vec<ReadRangeOutput>, anyhow::Error> {
+  ) -> Result<Vec<ReadRangeOutput>, SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
     self
       .request_tx
@@ -383,31 +383,31 @@ impl Sqlite {
         sender,
       })
       .await
-      .map_err(|_| anyhow::anyhow!("Database is closed."))?;
+      .map_err(|_| SqliteBackendError::DatabaseClosed)?;
     let (ranges, _current_versionstamp) = receiver
       .await
-      .map_err(|_| anyhow::anyhow!("Database is closed."))??;
+      .map_err(|_| SqliteBackendError::DatabaseClosed)??;
     Ok(ranges)
   }
 
   pub async fn atomic_write(
     &self,
     write: AtomicWrite,
-  ) -> Result<Option<CommitResult>, anyhow::Error> {
+  ) -> Result<Option<CommitResult>, SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
     self
       .request_tx
       .send(SqliteRequest::AtomicWrite { write, sender })
       .await
-      .map_err(|_| anyhow::anyhow!("Database is closed."))?;
+      .map_err(|_| SqliteBackendError::DatabaseClosed)?;
     receiver
       .await
-      .map_err(|_| anyhow::anyhow!("Database is closed."))?
+      .map_err(|_| SqliteBackendError::DatabaseClosed)?
   }
 
   pub async fn dequeue_next_message(
     &self,
-  ) -> Result<Option<SqliteMessageHandle>, anyhow::Error> {
+  ) -> Result<Option<SqliteMessageHandle>, SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
     let req = SqliteRequest::QueueDequeueMessage { sender };
     if self.request_tx.send(req).await.is_err() {
@@ -505,20 +505,23 @@ impl Database for Sqlite {
     requests: Vec<ReadRange>,
     options: SnapshotReadOptions,
   ) -> Result<Vec<ReadRangeOutput>, anyhow::Error> {
-    Sqlite::snapshot_read(self, requests, options).await
+    let ranges = Sqlite::snapshot_read(self, requests, options).await?;
+    Ok(ranges)
   }
 
   async fn atomic_write(
     &self,
     write: AtomicWrite,
   ) -> Result<Option<CommitResult>, anyhow::Error> {
-    Sqlite::atomic_write(self, write).await
+    let res = Sqlite::atomic_write(self, write).await?;
+    Ok(res)
   }
 
   async fn dequeue_next_message(
     &self,
   ) -> Result<Option<Self::QMH>, anyhow::Error> {
-    Sqlite::dequeue_next_message(self).await
+    let message_handle = Sqlite::dequeue_next_message(self).await?;
+    Ok(message_handle)
   }
 
   fn watch(
@@ -540,9 +543,8 @@ pub struct SqliteMessageHandle {
   request_tx: tokio::sync::mpsc::Sender<SqliteRequest>,
 }
 
-#[async_trait::async_trait(?Send)]
-impl QueueMessageHandle for SqliteMessageHandle {
-  async fn finish(&self, success: bool) -> Result<(), anyhow::Error> {
+impl SqliteMessageHandle {
+  pub async fn finish(&self, success: bool) -> Result<(), SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
     self
       .request_tx
@@ -552,13 +554,26 @@ impl QueueMessageHandle for SqliteMessageHandle {
         sender,
       })
       .await
-      .map_err(|_| anyhow::anyhow!("Database is closed."))?;
+      .map_err(|_| SqliteBackendError::DatabaseClosed)?;
     receiver
       .await
-      .map_err(|_| anyhow::anyhow!("Database is closed."))?
+      .map_err(|_| SqliteBackendError::DatabaseClosed)?
+  }
+
+  pub async fn take_payload(&mut self) -> Result<Vec<u8>, SqliteBackendError> {
+    Ok(self.payload.take().expect("can't take payload twice"))
+  }
+}
+
+#[async_trait::async_trait(?Send)]
+impl QueueMessageHandle for SqliteMessageHandle {
+  async fn finish(&self, success: bool) -> Result<(), anyhow::Error> {
+    SqliteMessageHandle::finish(self, success).await?;
+    Ok(())
   }
 
   async fn take_payload(&mut self) -> Result<Vec<u8>, anyhow::Error> {
-    Ok(self.payload.take().expect("can't take payload twice"))
+    let payload = SqliteMessageHandle::take_payload(self).await?;
+    Ok(payload)
   }
 }

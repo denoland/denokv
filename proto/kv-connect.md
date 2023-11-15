@@ -349,7 +349,7 @@ from this server, the `status` field MUST be set to `AW_WRITE_DISABLED`. If a
 write operation fails due to a check conflict, the `status` field MUST be set to
 `AW_CHECK_FAILED`. If the write operation succeeds, the `status` field MUST be
 set to `AW_SUCCESS`. If the request succeeds, the server MUST include the
-`versiontamp` field with the versionstamp of the write operation.
+`versionstamp` field with the versionstamp of the write operation.
 
 If the client fails to receive a response from the server due to a network
 error, or a 5xx class HTTP status, the client SHOULD retry the request using an

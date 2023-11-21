@@ -9,8 +9,8 @@ authors = ["the Deno authors"]
 edition = "2021"
 
 [workspace.dependencies]
-denokv_proto = { version = "0.3.0", path = "./proto" }
-denokv_sqlite = { version = "0.3.0", path = "./sqlite" }
+denokv_proto = { version = "0.4.0", path = "./proto" }
+denokv_sqlite = { version = "0.4.0", path = "./sqlite" }
 denokv_remote = { version = "0.3.0", path = "./remote" }
 denokv_timemachine = { version = "0.1.0", path = "./timemachine" }
 

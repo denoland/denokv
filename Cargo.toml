@@ -11,8 +11,8 @@ edition = "2021"
 [workspace.dependencies]
 denokv_proto = { version = "0.4.0", path = "./proto" }
 denokv_sqlite = { version = "0.4.0", path = "./sqlite" }
-denokv_remote = { version = "0.3.0", path = "./remote" }
-denokv_timemachine = { version = "0.1.0", path = "./timemachine" }
+denokv_remote = { version = "0.4.0", path = "./remote" }
+denokv_timemachine = { version = "0.2.0", path = "./timemachine" }
 
 anyhow = "1"
 async-trait = "0.1"

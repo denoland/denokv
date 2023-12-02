@@ -239,7 +239,7 @@ jobs:
         run: |
           npm config set provenance true
           echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-          VERSION=0.0.0-dryrun DRY_RUN=1 ./.github/npm_publish.sh
+          VERSION=0.0.0-dryrun DRY_RUN=1 ../.github/npm_publish.sh
         working-directory: ./npm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -252,7 +252,7 @@ jobs:
           if grep "^v\?[0-9]\+\.[0-9]\+\.[0-9]\+" <<< $TAG_NAME;
           then
             echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-            VERSION=$TAG_NAME ./.github/npm_publish.sh
+            VERSION=$TAG_NAME ../.github/npm_publish.sh
           else
             echo "Not a release, skipping publish"
           fi

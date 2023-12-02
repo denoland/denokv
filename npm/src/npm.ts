@@ -5,6 +5,7 @@ import {
   checkRecord,
 } from "./check.ts";
 import { makeInMemoryService } from "./in_memory.ts";
+import { Kv } from "./kv_types.ts";
 import { DecodeV8, EncodeV8 } from "./kv_util.ts";
 import { isNapiInterface, makeNapiBasedService } from "./napi_based.ts";
 import { makeNativeService } from "./native.ts";
@@ -34,7 +35,7 @@ export async function openKv(
     debug?: boolean;
     implementation?: KvImplementation;
   } = {},
-) {
+): Promise<Kv> {
   checkOptionalString("path", path);
   checkRecord("opts", opts);
   checkOptionalBoolean("opts.debug", opts.debug);
@@ -51,7 +52,7 @@ export async function openKv(
   if ("Deno" in globalThis && !implementation) {
     // deno-lint-ignore no-explicit-any
     const { openKv } = (globalThis as any).Deno;
-    if (typeof openKv === "function") return makeNativeService();
+    if (typeof openKv === "function") return makeNativeService().openKv(path);
   }
 
   // use in-memory implementation if no path provided

@@ -10,7 +10,6 @@ export function makeUnrawWatchStream(
   let latest: KvEntryMaybe<unknown>[] | undefined;
   let signal = defer<void>();
   let cancelled = false;
-  let n = 1;
   return new ReadableStream({
     start(controller) {
       (async () => {
@@ -31,28 +30,34 @@ export function makeUnrawWatchStream(
       })();
     },
     async pull(controller) {
-      if (n++ === 1) return; // assume the first pull is not user-initiated
       if (!latest) await signal;
       if (!latest) return;
-      if (!pulled) {
-        pulled = latest;
-        controller.enqueue(pulled);
-        return;
-      }
-      let changed = false;
-      for (let i = 0; i < latest.length; i++) {
-        if (latest[i].versionstamp === pulled[i].versionstamp) continue;
-        changed = true;
-        break;
-      }
-      if (changed) {
-        pulled = latest;
-        controller.enqueue(pulled);
+      while (true) {
+        let changed = false;
+        if (pulled) {
+          for (let i = 0; i < latest.length; i++) {
+            if (latest[i].versionstamp === pulled[i].versionstamp) continue;
+            changed = true;
+            break;
+          }
+        } else {
+          pulled = latest;
+          changed = pulled.some((v) => v.versionstamp !== null);
+        }
+        if (changed) {
+          pulled = latest;
+          controller.enqueue(pulled);
+          return;
+        } else {
+          await signal;
+        }
       }
     },
     async cancel() {
       cancelled = true;
       await onCancel();
     },
+  }, {
+    highWaterMark: 0, // ensure all pulls are user-initiated
   });
 }

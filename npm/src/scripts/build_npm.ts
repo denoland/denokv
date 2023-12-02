@@ -27,6 +27,7 @@ const napi = typeof flags.napi === "string"
   }
   : undefined;
 if (napi) console.log(`napi: ${JSON.stringify(napi)}`);
+if (!napi) throw new Error('Must provide --napi version');
 const version = typeof Deno.args[0] === "string"
   ? stripLeadingV(Deno.args[0])
   : Deno.args[0];
@@ -61,7 +62,7 @@ await build({
   },
   package: {
     // package.json properties
-    name: napi?.packageName ?? "deno-kv",
+    name: napi.packageName,
     version,
     description: "A Deno KV client library optimized for Node.js.",
     license: "MIT",
@@ -73,51 +74,45 @@ await build({
       url: "https://github.com/denoland/denokv/issues",
     },
     homepage: "https://github.com/denoland/denokv",
-    ...(napi
-      ? {
-        optionalDependencies: Object.fromEntries(
-          ["win32-x64-msvc", "darwin-x64", "linux-x64-gnu", "darwin-arm64"].map(
-            (v) => [`${napi.packageName}-${v}`, napi.packageVersion],
-          ),
-        ),
-      }
-      : {}),
+    optionalDependencies: Object.fromEntries(
+      ["win32-x64-msvc", "darwin-x64", "linux-x64-gnu", "darwin-arm64"].map(
+        (v) => [`${napi.packageName}-${v}`, napi.packageVersion],
+      ),
+    ),
   },
   async postBuild() {
     // steps to run after building and before running the tests
     await Deno.copyFile("LICENSE", join(outDir, "LICENSE"));
     await Deno.copyFile(
-      napi ? "napi/README.md" : "README.md",
+      "napi/README.md",
       join(outDir, "README.md"),
     );
-    if (napi) {
-      const napiIndexJs = generateNapiIndex({
-        napiPackageName: napi.packageName,
-        napiArtifactName: napi.artifactName,
-      });
-      for (const subdir of ["script", "esm"]) {
-        console.log(`writing ${join(subdir, "_napi_index.js")}`);
-        await Deno.writeTextFile(
-          join(outDir, subdir, "_napi_index.js"),
-          napiIndexJs,
-        );
+    const napiIndexJs = generateNapiIndex({
+      napiPackageName: napi.packageName,
+      napiArtifactName: napi.artifactName,
+    });
+    for (const subdir of ["script", "esm"]) {
+      console.log(`writing ${join(subdir, "_napi_index.js")}`);
+      await Deno.writeTextFile(
+        join(outDir, subdir, "_napi_index.js"),
+        napiIndexJs,
+      );
 
-        console.log(`tweaking ${join(subdir, "napi_based.js")}`);
-        const oldContents = await Deno.readTextFile(
-          join(outDir, subdir, "napi_based.js"),
-        );
-        const insertion = subdir === "esm"
-          ? `import('._napi_index.js')`
-          : `require("./_napi_index.js")`;
-        const newContents = oldContents.replace(
-          `const DEFAULT_NAPI_INTERFACE = undefined;`,
-          `const DEFAULT_NAPI_INTERFACE = ${insertion};`,
-        );
-        await Deno.writeTextFile(
-          join(outDir, subdir, "napi_based.js"),
-          newContents,
-        );
-      }
+      console.log(`tweaking ${join(subdir, "napi_based.js")}`);
+      const oldContents = await Deno.readTextFile(
+        join(outDir, subdir, "napi_based.js"),
+      );
+      const insertion = subdir === "esm"
+        ? `import('._napi_index.js')`
+        : `require("./_napi_index.js")`;
+      const newContents = oldContents.replace(
+        `const DEFAULT_NAPI_INTERFACE = undefined;`,
+        `const DEFAULT_NAPI_INTERFACE = ${insertion};`,
+      );
+      await Deno.writeTextFile(
+        join(outDir, subdir, "napi_based.js"),
+        newContents,
+      );
     }
   },
 });
@@ -151,18 +146,16 @@ if (publish) {
     console.log(out);
   };
 
-  if (napi) {
-    // first, publish the native subpackages
-    for (
-      const { name: subdir }
-        of (await Array.fromAsync(Deno.readDir("napi/npm"))).filter((v) =>
-          v.isDirectory
-        )
-    ) {
-      const path = join("napi", "npm", subdir, "package.json");
-      await updatePackageJsonVersion(path, version);
-      await npmPublish(join("napi", "npm", subdir));
-    }
+  // first, publish the native subpackages
+  for (
+    const { name: subdir }
+      of (await Array.fromAsync(Deno.readDir("napi/npm"))).filter((v) =>
+        v.isDirectory
+      )
+  ) {
+    const path = join("napi", "npm", subdir, "package.json");
+    await updatePackageJsonVersion(path, version);
+    await npmPublish(join("napi", "npm", subdir));
   }
   // finally, publish the root package
   await npmPublish(outDir);

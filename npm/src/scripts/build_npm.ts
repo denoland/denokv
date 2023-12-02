@@ -27,7 +27,7 @@ const napi = typeof flags.napi === "string"
   }
   : undefined;
 if (napi) console.log(`napi: ${JSON.stringify(napi)}`);
-if (!napi) throw new Error('Must provide --napi version');
+if (!napi) throw new Error("Must provide --napi version");
 const version = typeof Deno.args[0] === "string"
   ? stripLeadingV(Deno.args[0])
   : Deno.args[0];
@@ -82,7 +82,7 @@ await build({
   },
   async postBuild() {
     // steps to run after building and before running the tests
-    await Deno.copyFile("LICENSE", join(outDir, "LICENSE"));
+    await Deno.copyFile("../LICENSE", join(outDir, "LICENSE"));
     await Deno.copyFile(
       "napi/README.md",
       join(outDir, "README.md"),
@@ -148,10 +148,8 @@ if (publish) {
 
   // first, publish the native subpackages
   for (
-    const { name: subdir }
-      of (await Array.fromAsync(Deno.readDir("napi/npm"))).filter((v) =>
-        v.isDirectory
-      )
+    const { name: subdir } of (await Array.fromAsync(Deno.readDir("napi/npm")))
+      .filter((v) => v.isDirectory)
   ) {
     const path = join("napi", "npm", subdir, "package.json");
     await updatePackageJsonVersion(path, version);

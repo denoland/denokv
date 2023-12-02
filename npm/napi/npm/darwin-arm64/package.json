@@ -1,0 +1,38 @@
+{
+  "name": "@deno/kv-darwin-arm64",
+  "version": "0.0.0-local",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "deno-kv-napi.darwin-arm64.node",
+  "files": [
+    "deno-kv-napi.darwin-arm64.node"
+  ],
+  "description": "A Deno KV client library optimized for Node.js",
+  "keywords": [
+    "deno",
+    "kv",
+    "napi-rs",
+    "NAPI",
+    "N-API",
+    "Rust",
+    "node-addon",
+    "node-addon-api"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 18"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/denoland/denokv.git",
+    "directory": "npm/napi"
+  }
+}

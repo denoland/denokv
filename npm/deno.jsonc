@@ -1,0 +1,31 @@
+{
+    "lint": {
+        "exclude": [
+            "src/proto", // generated
+        ],
+        "include": [
+            "src"
+        ],
+        "rules": {
+            "tags": [
+                "recommended"
+            ],
+            "include": [
+                "camelcase",
+                "guard-for-in"
+            ],
+            "exclude": [
+                "no-invalid-triple-slash-reference"
+            ]
+        }
+    },
+    "fmt": {
+        "exclude": [
+            "src/proto", // generated
+        ],
+        "include": [
+            "src"
+        ],
+    },
+    "lock": false,
+}

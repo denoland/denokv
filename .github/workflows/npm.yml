@@ -1,0 +1,260 @@
+name: npm
+env:
+  DEBUG: napi:*
+  APP_NAME: deno-kv-napi
+  MACOSX_DEPLOYMENT_TARGET: '10.13'
+'on':
+  push:
+    branches:
+      - main
+    tags:
+      - '**'
+    paths:
+      - '.github/workflows/*.yml'
+      - '.github/*.sh'
+      - 'npm/napi/**'
+      - '!npm/napi/**/*.md'
+      - '!npm/napi/LICENSE'
+      - '!npm/napi/**/*.gitignore'
+      - '!npm/napi/.editorconfig'
+      - '!npm/napi/docs/**'
+  pull_request: null
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            build: |
+              brew install protobuf
+              yarn build
+              strip -x *.node
+          - host: windows-latest
+            build: |
+              vcpkg install protobuf
+              export PROTOC=C:/vcpkg/packages/protobuf_x64-windows/tools/protobuf/protoc.exe
+              yarn build
+            target: x86_64-pc-windows-msvc
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
+            build: |-
+              set -e &&
+              apt-get -y install protobuf-compiler &&
+              yarn build --target x86_64-unknown-linux-gnu &&
+              strip *.node
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            build: |
+              sudo rm -Rf /Library/Developer/CommandLineTools/SDKs/*;
+              export CC=$(xcrun -f clang);
+              export CXX=$(xcrun -f clang++);
+              SYSROOT=$(xcrun --sdk macosx --show-sdk-path);
+              export CFLAGS="-isysroot $SYSROOT -isystem $SYSROOT";
+              brew install protobuf
+              yarn build --target aarch64-apple-darwin
+              strip -x *.node
+    name: stable - ${{ matrix.settings.target }} - node@18
+    runs-on: ${{ matrix.settings.host }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        if: ${{ !matrix.settings.docker }}
+        with:
+          node-version: 18
+          cache: yarn
+          cache-dependency-path: ./npm/napi/yarn.lock
+      - name: Install
+        uses: dtolnay/rust-toolchain@stable
+        if: ${{ !matrix.settings.docker }}
+        with:
+          toolchain: stable
+          targets: ${{ matrix.settings.target }}
+      - name: Cache cargo
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            .cargo-cache
+            target/
+          key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
+      - uses: goto-bus-stop/setup-zig@v2
+        if: ${{ matrix.settings.target == 'armv7-unknown-linux-gnueabihf' }}
+        with:
+          version: 0.11.0
+      - name: Setup toolchain
+        run: ${{ matrix.settings.setup }}
+        if: ${{ matrix.settings.setup }}
+        shell: bash
+      - name: Setup node x86
+        if: matrix.settings.target == 'i686-pc-windows-msvc'
+        run: yarn config set supportedArchitectures.cpu "ia32"
+        shell: bash
+        working-directory: ./npm/napi
+      - name: Install dependencies
+        run: yarn install
+        working-directory: ./npm/napi
+      - name: Setup node x86
+        uses: actions/setup-node@v4
+        if: matrix.settings.target == 'i686-pc-windows-msvc'
+        with:
+          node-version: 18
+          cache: yarn
+          architecture: x86
+          cache-dependency-path: ./npm/napi/yarn.lock
+      - name: Build in docker
+        uses: addnab/docker-run-action@v3
+        if: ${{ matrix.settings.docker }}
+        with:
+          image: ${{ matrix.settings.docker }}
+          options: '--user 0:0 -v ${{ github.workspace }}/.cargo-cache/git/db:/usr/local/cargo/git/db -v ${{ github.workspace }}/.cargo/registry/cache:/usr/local/cargo/registry/cache -v ${{ github.workspace }}/.cargo/registry/index:/usr/local/cargo/registry/index -v ${{ github.workspace }}/npm/napi:/build -w /build'
+          run: ${{ matrix.settings.build }}
+      - name: Build
+        run: ${{ matrix.settings.build }}
+        if: ${{ !matrix.settings.docker }}
+        shell: bash
+        working-directory: ./npm/napi
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: bindings-${{ matrix.settings.target }}
+          path: npm/napi/${{ env.APP_NAME }}.*.node
+          if-no-files-found: error
+  test-macOS-windows-binding:
+    name: Test bindings on ${{ matrix.settings.target }} - node@${{ matrix.node }}
+    needs:
+      - build
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+          - host: macos-latest
+            target: x86_64-apple-darwin
+        node:
+          - '18'
+          - '20'
+    runs-on: ${{ matrix.settings.host }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: yarn
+          cache-dependency-path: ./npm/napi/yarn.lock
+      - name: Install dependencies
+        run: yarn install
+        working-directory: ./npm/napi
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: bindings-${{ matrix.settings.target }}
+          path: ./npm/napi
+      - name: List packages
+        run: ls -R .
+        shell: bash
+        working-directory: ./npm/napi
+      - name: Test bindings
+        run: yarn test
+        working-directory: ./npm/napi
+  test-linux-x64-gnu-binding:
+    name: Test bindings on Linux-x64-gnu - node@${{ matrix.node }}
+    needs:
+      - build
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - '18'
+          - '20'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: yarn
+          cache-dependency-path: ./npm/napi/yarn.lock
+      - name: Install dependencies
+        run: yarn install
+        working-directory: ./npm/napi
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: bindings-x86_64-unknown-linux-gnu
+          path: ./npm/napi
+      - name: List packages
+        run: ls -R .
+        shell: bash
+        working-directory: ./npm/napi
+      - name: Test bindings
+        run: docker run --rm -v $(pwd):/build -w /build node:${{ matrix.node }}-slim yarn test
+        working-directory: ./npm/napi
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # to publish provenance
+    needs:
+      - test-macOS-windows-binding
+      - test-linux-x64-gnu-binding
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: yarn
+          cache-dependency-path: ./npm/napi/yarn.lock
+      - name: Install dependencies
+        run: yarn install
+        working-directory: ./npm/napi
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: npm/napi/artifacts
+      - name: Move artifacts
+        run: yarn artifacts
+        working-directory: ./npm/napi
+      - name: List packages
+        run: ls -R ./npm
+        working-directory: ./npm/napi
+        shell: bash
+      - name: Publish Dry-Run
+        if: "!(github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/'))"
+        run: |
+          npm config set provenance true
+          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+          VERSION=0.0.0-dryrun DRY_RUN=1 .github/npm_publish.sh
+        working-directory: ./npm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish
+        if: github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo "$TAG_NAME"
+          npm config set provenance true
+          if grep "^v\?[0-9]\+\.[0-9]\+\.[0-9]\+" <<< $TAG_NAME;
+          then
+            echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+            VERSION=$TAG_NAME .github/npm_publish.sh
+          else
+            echo "Not a release, skipping publish"
+          fi
+        working-directory: ./npm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}

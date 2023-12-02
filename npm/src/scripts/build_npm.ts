@@ -92,19 +92,18 @@ await build({
       napiArtifactName: napi.artifactName,
     });
     for (const subdir of ["script", "esm"]) {
-      console.log(`writing ${join(subdir, "_napi_index.js")}`);
-      await Deno.writeTextFile(
-        join(outDir, subdir, "_napi_index.js"),
-        napiIndexJs,
-      );
+      const name = "_napi_index.cjs"; // cjs to ensure 'require' works in esm mode
+      console.log(`writing ${join(subdir, name)}`);
+      await Deno.writeTextFile(join(outDir, subdir, name), napiIndexJs);
 
       console.log(`tweaking ${join(subdir, "napi_based.js")}`);
       const oldContents = await Deno.readTextFile(
         join(outDir, subdir, "napi_based.js"),
       );
       const insertion = subdir === "esm"
-        ? `import('._napi_index.js')`
-        : `require("./_napi_index.js")`;
+        ? `await import('./${name}')`
+        : `require('./${name}')`;
+
       const newContents = oldContents.replace(
         `const DEFAULT_NAPI_INTERFACE = undefined;`,
         `const DEFAULT_NAPI_INTERFACE = ${insertion};`,

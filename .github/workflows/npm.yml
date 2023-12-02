@@ -71,6 +71,8 @@ jobs:
           node-version: 18
           cache: yarn
           cache-dependency-path: ./npm/napi/yarn.lock
+      - name: Remove rust-toolchain.toml (conflicts with mac arm64 build)
+        run: rm rust-toolchain.toml
       - name: Install
         uses: dtolnay/rust-toolchain@stable
         if: ${{ !matrix.settings.docker }}

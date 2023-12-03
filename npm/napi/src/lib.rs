@@ -53,14 +53,15 @@ pub fn close(db_id: u32, debug: bool) {
 
 #[napi]
 pub async fn snapshot_read(db_id: u32, snapshot_read_bytes: Buffer, debug: bool) -> Result<Buffer> {
-  let snapshot_read_pb = pb::SnapshotRead::decode(&mut Cursor::new(snapshot_read_bytes)).unwrap();
+  let snapshot_read_pb = pb::SnapshotRead::decode(&mut Cursor::new(snapshot_read_bytes))
+    .map_err(convert_prost_decode_error_to_anyhow)?;
   if debug { println!("[napi] snapshot_read: db_id={:#?} snapshot_read_pb={:#?}", db_id, snapshot_read_pb) }
 
   let options = SnapshotReadOptions {
     consistency: Consistency::Strong,
   };
 
-  let requests: Vec<ReadRange> = snapshot_read_pb.try_into().map_err(convert_error_to_anyhow).unwrap();
+  let requests: Vec<ReadRange> = snapshot_read_pb.try_into().map_err(convert_error_to_anyhow)?;
 
   let db = DBS.lock().unwrap().get(&db_id).unwrap().to_owned();
 
@@ -77,10 +78,11 @@ pub async fn snapshot_read(db_id: u32, snapshot_read_bytes: Buffer, debug: bool)
 
 #[napi]
 pub async fn atomic_write(db_id: u32, atomic_write_bytes: Buffer, debug: bool) -> Result<Buffer> {
-  let atomic_write_pb = pb::AtomicWrite::decode(&mut Cursor::new(atomic_write_bytes)).unwrap();
+  let atomic_write_pb = pb::AtomicWrite::decode(&mut Cursor::new(atomic_write_bytes))
+    .map_err(convert_prost_decode_error_to_anyhow)?;
   if debug { println!("[napi] atomic_write: db_id={:#?} atomic_write_pb={:#?}", db_id, atomic_write_pb) }
 
-  let atomic_write: denokv_proto::AtomicWrite = atomic_write_pb.try_into().map_err(convert_error_to_anyhow).unwrap();
+  let atomic_write: denokv_proto::AtomicWrite = atomic_write_pb.try_into().map_err(convert_error_to_anyhow)?;
 
   let db = DBS.lock().unwrap().get(&db_id).unwrap().to_owned();
 
@@ -109,7 +111,7 @@ pub async fn dequeue_next_message(db_id: u32, debug: bool) -> Result<Either<Queu
 
   let opt_handle = db.dequeue_next_message()
     .await
-    .unwrap();
+    .map_err(convert_sqlite_backend_error_to_anyhow)?;
 
   if opt_handle.is_none() {
     if debug { println!("[napi] dequeue_next_message: no messages! db_id={:#?}", db_id) }
@@ -119,7 +121,7 @@ pub async fn dequeue_next_message(db_id: u32, debug: bool) -> Result<Either<Queu
   let mut handle = opt_handle.unwrap();
   let payload = handle.take_payload()
     .await
-    .unwrap();
+    .map_err(convert_sqlite_backend_error_to_anyhow)?;
 
   let message_id: u32 = MSGS.lock().unwrap().keys().max().unwrap_or(&0) + 1;
   MSGS.lock().unwrap().insert(message_id, handle);
@@ -130,14 +132,17 @@ pub async fn dequeue_next_message(db_id: u32, debug: bool) -> Result<Either<Queu
 }
 
 #[napi]
-pub async fn finish_message(db_id: u32, message_id: u32, success: bool, debug: bool) {
+pub async fn finish_message(db_id: u32, message_id: u32, success: bool, debug: bool) -> Result<()> {
   if debug { println!("[napi] finish_message db_id={:#?} message_id={:#?} success={:#?}", db_id, message_id, success) }
   let opt_handle = MSGS.lock().unwrap().remove(&message_id);
   let handle = opt_handle.unwrap();
 
-  handle.finish(success).await.unwrap();
-}
+  handle.finish(success)
+    .await
+    .map_err(convert_sqlite_backend_error_to_anyhow)?;
 
+  Ok(())
+}
 
 #[napi]
 pub async fn start_watch(db_id: u32, watch_bytes: Buffer, debug: bool) -> Result<u32> {
@@ -225,3 +230,4 @@ fn convert_error_to_str(err: denokv_proto::ConvertError) -> String {
 
 fn convert_error_to_anyhow(err: denokv_proto::ConvertError) -> anyhow::Error { anyhow::anyhow!(convert_error_to_str(err)) }
 fn convert_sqlite_backend_error_to_anyhow(err: SqliteBackendError) -> anyhow::Error { err.into() }
+fn convert_prost_decode_error_to_anyhow(err: prost::DecodeError) -> anyhow::Error { err.into() }

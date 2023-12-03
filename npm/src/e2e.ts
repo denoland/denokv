@@ -551,12 +551,35 @@ export async function endToEnd(
   // set(bigint).sum(bigint) should throw to match current native behavior
   {
     const k1 = ["k1"];
-    assertRejects(() =>
+    await assertRejects(() =>
       kv.atomic().delete(k1).set(k1, 0n).sum(k1, 2n).commit()
     );
 
     await kv.set(k1, 0n);
-    assertRejects(() => kv.atomic().sum(k1, 2n).commit());
+    await assertRejects(() => kv.atomic().sum(k1, 2n).commit());
+  }
+
+  // documented limits
+  if (subtype !== "in-memory") {
+    // Keys have a maximum length of 2048 bytes after serialization
+    await assertRejects(() =>
+      kv.set([new Uint8Array(1024 * 2 + 10)], "too-long")
+    );
+
+    // Values have a maximum length of 64 KiB after serialization
+    await assertRejects(() => kv.set(["k1"], new Uint8Array(1024 * 64 * 10)));
+
+    // KV atomic mutation limits (currently 10 per atomic batch)
+    // https://github.com/denoland/deno/issues/19284
+    const commitBatch = async (n: number) => {
+      const atomic = kv.atomic();
+      for (let i = 0; i < n; i++) {
+        atomic.set(["batch", i], `${i}`);
+      }
+      return await atomic.commit();
+    };
+    await commitBatch(10);
+    // await assertRejects(() => commitBatch(11)); // no longer enforced?
   }
 
   // close

@@ -1,5 +1,6 @@
 #![deny(clippy::all)]
 use denokv_proto::ConvertError;
+use denokv_sqlite::SqliteBackendError;
 // use denokv_proto::datapath::SnapshotReadStatus; // TODO waiting on watch pr
 // use denokv_proto::datapath::WatchOutput;
 // use denokv_sqlite::SqliteNotifier;
@@ -66,7 +67,7 @@ pub async fn snapshot_read(db_id: u32, snapshot_read_bytes: Buffer, debug: bool)
   let output_pb: pb::SnapshotReadOutput = db
     .snapshot_read(requests, options)
     .await
-    .unwrap()
+    .map_err(convert_sqlite_backend_error_to_anyhow)?
     .into();
 
   if debug { println!("[napi] snapshot_read: output_pb={:#?}", output_pb) }
@@ -86,7 +87,7 @@ pub async fn atomic_write(db_id: u32, atomic_write_bytes: Buffer, debug: bool) -
   let output_pb: pb::AtomicWriteOutput = db
     .atomic_write(atomic_write)
     .await
-    .unwrap()
+    .map_err(convert_sqlite_backend_error_to_anyhow)?
     .into();
 
   if debug { println!("[napi] atomic_write: db_id={:#?} output_pb={:#?}", db_id, output_pb) }
@@ -223,3 +224,4 @@ fn convert_error_to_str(err: denokv_proto::ConvertError) -> String {
 }
 
 fn convert_error_to_anyhow(err: denokv_proto::ConvertError) -> anyhow::Error { anyhow::anyhow!(convert_error_to_str(err)) }
+fn convert_sqlite_backend_error_to_anyhow(err: SqliteBackendError) -> anyhow::Error { err.into() }

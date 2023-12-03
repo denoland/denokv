@@ -10,7 +10,7 @@ version = "0.0.0" # never published
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = {version="2", features=["async"]}
+napi = {version="2", features=["async","anyhow"]}
 napi-derive = "2"
 denokv_sqlite = "0.4.0"
 denokv_proto = "0.4.0"

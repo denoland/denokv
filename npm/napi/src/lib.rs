@@ -65,7 +65,9 @@ pub fn close(db_id: u32, debug: bool) {
     println!("[napi] close: db_id={:#?}", db_id)
   }
   let db = DBS.lock().unwrap().remove(&db_id);
-  if let Some(db) = db { db.close() };
+  if let Some(db) = db {
+    db.close()
+  };
 }
 
 #[napi]

@@ -287,6 +287,7 @@ impl SqliteBackend {
       let version: i64 = tx
         .prepare_cached(STATEMENT_INC_AND_GET_DATA_VERSION)?
         .query_row([incrementer_count], |row| row.get(0))?;
+      let new_versionstamp = version_to_versionstamp(version);
 
       for mutation in &write.mutations {
         match &mutation.kind {
@@ -326,6 +327,31 @@ impl SqliteBackend {
               a.max(b)
             })?;
           }
+          MutationKind::SetSuffixVersionstampedKey(value) => {
+            let mut versionstamp_suffix = [0u8; 22];
+            versionstamp_suffix[0] = 0x02;
+            hex::encode_to_slice(
+              &new_versionstamp,
+              &mut versionstamp_suffix[1..21],
+            )
+            .unwrap();
+
+            let key = [&mutation.key[..], &versionstamp_suffix[..]].concat();
+
+            let (value, encoding) = encode_value(value);
+            let changed =
+              tx.prepare_cached(STATEMENT_KV_POINT_SET)?.execute(params![
+                key,
+                value,
+                &encoding,
+                &version,
+                mutation
+                  .expire_at
+                  .map(|time| time.timestamp_millis())
+                  .unwrap_or(-1i64)
+              ])?;
+            assert_eq!(changed, 1)
+          }
         }
       }
 
@@ -354,8 +380,6 @@ impl SqliteBackend {
             ])?;
         assert_eq!(changed, 1)
       }
-
-      let new_versionstamp = version_to_versionstamp(version);
 
       Ok((
         has_enqueues,

@@ -614,6 +614,14 @@ impl<P: RemotePermissions> Database for Remote<P> {
             expire_at_ms,
           });
         }
+        denokv_proto::MutationKind::SetSuffixVersionstampedKey(value) => {
+          mutations.push(pb::Mutation {
+            key: mutation.key,
+            value: Some(encode_value_to_pb(value)),
+            mutation_type: pb::MutationType::MSetSuffixVersionstampedKey as _,
+            expire_at_ms,
+          });
+        }
       }
     }
 

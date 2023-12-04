@@ -847,6 +847,7 @@ dependencies = [
  "chrono",
  "denokv_proto",
  "futures",
+ "hex",
  "log",
  "num-bigint",
  "rand",

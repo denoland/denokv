@@ -331,7 +331,7 @@ impl SqliteBackend {
             let mut versionstamp_suffix = [0u8; 22];
             versionstamp_suffix[0] = 0x02;
             hex::encode_to_slice(
-              &new_versionstamp,
+              new_versionstamp,
               &mut versionstamp_suffix[1..21],
             )
             .unwrap();

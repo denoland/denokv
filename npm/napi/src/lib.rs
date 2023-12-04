@@ -22,6 +22,8 @@ use rusqlite::OpenFlags;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::Notify;
@@ -31,13 +33,13 @@ pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> u32 {
   if debug {
     println!("[napi] open: path={:#?} in_memory={:#?}", path, in_memory)
   }
-  let flags = if in_memory.is_some() && in_memory.unwrap() {
+  let flags = if let Some(true) = in_memory {
     OpenFlags::default() | OpenFlags::SQLITE_OPEN_MEMORY
   } else {
     OpenFlags::default()
   };
   let conn = Connection::open_with_flags(Path::new(&path), flags).unwrap();
-  let rng: Box<_> = Box::new(rand::rngs::StdRng::from_entropy());
+  let rng = Box::new(rand::rngs::StdRng::from_entropy());
 
   let opened_path = conn.path().unwrap().to_owned();
   // let notifier = SqliteNotifier::default(); // TODO waiting on watch pr
@@ -45,8 +47,9 @@ pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> u32 {
   let notify = Arc::new(Notify::new());
   let sqlite = Sqlite::new(conn, notify, rng).unwrap();
 
-  let db_id = DBS.lock().unwrap().keys().max().unwrap_or(&0) + 1;
+  let db_id = DB_ID.fetch_add(1, Ordering::Relaxed);
   DBS.lock().unwrap().insert(db_id, sqlite);
+
   if debug {
     println!(
       "[napi] open: db_id={:#?} opened_path={:#?}",
@@ -61,9 +64,8 @@ pub fn close(db_id: u32, debug: bool) {
   if debug {
     println!("[napi] close: db_id={:#?}", db_id)
   }
-  let mut dbs = DBS.lock().unwrap();
-  dbs.get(&db_id).unwrap().close();
-  dbs.remove(&db_id);
+  let db = DBS.lock().unwrap().remove(&db_id);
+  db.map(|db| db.close());
 }
 
 #[napi]
@@ -90,7 +92,12 @@ pub async fn snapshot_read(
     .try_into()
     .map_err(convert_error_to_anyhow)?;
 
-  let db = DBS.lock().unwrap().get(&db_id).unwrap().to_owned();
+  let db = DBS
+    .lock()
+    .unwrap()
+    .get(&db_id)
+    .map(|db| db.clone())
+    .ok_or_else(|| anyhow::anyhow!("db not found"))?;
 
   let output_pb: pb::SnapshotReadOutput = db
     .snapshot_read(requests, options)
@@ -125,7 +132,12 @@ pub async fn atomic_write(
     .try_into()
     .map_err(convert_error_to_anyhow)?;
 
-  let db = DBS.lock().unwrap().get(&db_id).unwrap().to_owned();
+  let db = DBS
+    .lock()
+    .unwrap()
+    .get(&db_id)
+    .map(|db| db.clone())
+    .ok_or_else(|| anyhow::anyhow!("db not found"))?;
 
   let output_pb: pb::AtomicWriteOutput = db
     .atomic_write(atomic_write)
@@ -158,14 +170,19 @@ pub async fn dequeue_next_message(
     println!("[napi] dequeue_next_message: db_id={:#?}", db_id)
   }
 
-  let db: Sqlite = DBS.lock().unwrap().get(&db_id).unwrap().to_owned();
+  let db = DBS
+    .lock()
+    .unwrap()
+    .get(&db_id)
+    .map(|db| db.clone())
+    .ok_or_else(|| anyhow::anyhow!("db not found"))?;
 
   let opt_handle = db
     .dequeue_next_message()
     .await
     .map_err(convert_sqlite_backend_error_to_anyhow)?;
 
-  if opt_handle.is_none() {
+  let Some(mut handle) = opt_handle else {
     if debug {
       println!(
         "[napi] dequeue_next_message: no messages! db_id={:#?}",
@@ -173,16 +190,16 @@ pub async fn dequeue_next_message(
       )
     }
     return Ok(Either::B(()));
-  }
+  };
 
-  let mut handle = opt_handle.unwrap();
   let payload = handle
     .take_payload()
     .await
     .map_err(convert_sqlite_backend_error_to_anyhow)?;
 
-  let message_id: u32 = MSGS.lock().unwrap().keys().max().unwrap_or(&0) + 1;
+  let message_id = MSG_ID.fetch_add(1, Ordering::Relaxed);
   MSGS.lock().unwrap().insert(message_id, handle);
+
   if debug {
     println!(
       "[napi] dequeue_next_message: received message db_id={:#?} message_id={:#?}",
@@ -207,8 +224,11 @@ pub async fn finish_message(
       db_id, message_id, success
     )
   }
-  let opt_handle = MSGS.lock().unwrap().remove(&message_id);
-  let handle = opt_handle.unwrap();
+  let handle = MSGS
+    .lock()
+    .unwrap()
+    .remove(&message_id)
+    .ok_or_else(|| anyhow::anyhow!("message not found"))?;
 
   handle
     .finish(success)
@@ -242,7 +262,7 @@ pub async fn start_watch(
 
   // TODO store stream in WATCHES?
 
-  let watch_id: u32 = WATCHES.lock().unwrap().keys().max().unwrap_or(&0) + 1;
+  let watch_id = WATCH_ID.fetch_add(1, Ordering::Relaxed);
   WATCHES.lock().unwrap().insert(watch_id, ());
 
   Ok(watch_id)
@@ -284,12 +304,15 @@ pub fn end_watch(db_id: u32, watch_id: u32, debug: bool) {
 
 //
 
+static DB_ID: AtomicU32 = AtomicU32::new(0);
 static DBS: Lazy<Mutex<HashMap<u32, Sqlite>>> =
   Lazy::new(|| Mutex::new(HashMap::new()));
 
+static MSG_ID: AtomicU32 = AtomicU32::new(0);
 static MSGS: Lazy<Mutex<HashMap<u32, SqliteMessageHandle>>> =
   Lazy::new(|| Mutex::new(HashMap::new()));
 
+static WATCH_ID: AtomicU32 = AtomicU32::new(0);
 static WATCHES: Lazy<Mutex<HashMap<u32, ()>>> =
   Lazy::new(|| Mutex::new(HashMap::new()));
 

@@ -67,9 +67,14 @@ pub fn close(db_id: u32, debug: bool) {
 }
 
 #[napi]
-pub async fn snapshot_read(db_id: u32, snapshot_read_bytes: Buffer, debug: bool) -> Result<Buffer> {
-  let snapshot_read_pb = pb::SnapshotRead::decode(&mut Cursor::new(snapshot_read_bytes))
-    .map_err(convert_prost_decode_error_to_anyhow)?;
+pub async fn snapshot_read(
+  db_id: u32,
+  snapshot_read_bytes: Buffer,
+  debug: bool,
+) -> Result<Buffer> {
+  let snapshot_read_pb =
+    pb::SnapshotRead::decode(&mut Cursor::new(snapshot_read_bytes))
+      .map_err(convert_prost_decode_error_to_anyhow)?;
   if debug {
     println!(
       "[napi] snapshot_read: db_id={:#?} snapshot_read_pb={:#?}",
@@ -101,9 +106,14 @@ pub async fn snapshot_read(db_id: u32, snapshot_read_bytes: Buffer, debug: bool)
 }
 
 #[napi]
-pub async fn atomic_write(db_id: u32, atomic_write_bytes: Buffer, debug: bool) -> Result<Buffer> {
-  let atomic_write_pb = pb::AtomicWrite::decode(&mut Cursor::new(atomic_write_bytes))
-    .map_err(convert_prost_decode_error_to_anyhow)?;
+pub async fn atomic_write(
+  db_id: u32,
+  atomic_write_bytes: Buffer,
+  debug: bool,
+) -> Result<Buffer> {
+  let atomic_write_pb =
+    pb::AtomicWrite::decode(&mut Cursor::new(atomic_write_bytes))
+      .map_err(convert_prost_decode_error_to_anyhow)?;
   if debug {
     println!(
       "[napi] atomic_write: db_id={:#?} atomic_write_pb={:#?}",
@@ -185,7 +195,12 @@ pub async fn dequeue_next_message(
 }
 
 #[napi]
-pub async fn finish_message(db_id: u32, message_id: u32, success: bool, debug: bool) -> Result<()> {
+pub async fn finish_message(
+  db_id: u32,
+  message_id: u32,
+  success: bool,
+  debug: bool,
+) -> Result<()> {
   if debug {
     println!(
       "[napi] finish_message db_id={:#?} message_id={:#?} success={:#?}",
@@ -204,7 +219,11 @@ pub async fn finish_message(db_id: u32, message_id: u32, success: bool, debug: b
 }
 
 #[napi]
-pub async fn start_watch(db_id: u32, watch_bytes: Buffer, debug: bool) -> Result<u32> {
+pub async fn start_watch(
+  db_id: u32,
+  watch_bytes: Buffer,
+  debug: bool,
+) -> Result<u32> {
   if debug {
     println!(
       "[napi] start_watch: db_id={:#?} watch_bytes={:#?}",
@@ -265,12 +284,14 @@ pub fn end_watch(db_id: u32, watch_id: u32, debug: bool) {
 
 //
 
-static DBS: Lazy<Mutex<HashMap<u32, Sqlite>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static DBS: Lazy<Mutex<HashMap<u32, Sqlite>>> =
+  Lazy::new(|| Mutex::new(HashMap::new()));
 
 static MSGS: Lazy<Mutex<HashMap<u32, SqliteMessageHandle>>> =
   Lazy::new(|| Mutex::new(HashMap::new()));
 
-static WATCHES: Lazy<Mutex<HashMap<u32, ()>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static WATCHES: Lazy<Mutex<HashMap<u32, ()>>> =
+  Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn to_buffer<T: prost::Message>(output: T) -> Buffer {
   let mut buf = Vec::with_capacity(output.encoded_len());
@@ -287,15 +308,27 @@ fn convert_error_to_str(err: denokv_proto::ConvertError) -> String {
     ConvertError::TooManyReadRanges => String::from("TooManyReadRanges"),
     ConvertError::TooManyChecks => String::from("TooManyChecks"),
     ConvertError::TooManyMutations => String::from("TooManyMutations"),
-    ConvertError::TooManyQueueUndeliveredKeys => String::from("TooManyQueueUndeliveredKeys"),
-    ConvertError::TooManyQueueBackoffIntervals => String::from("TooManyQueueBackoffIntervals"),
-    ConvertError::QueueBackoffIntervalTooLarge => String::from("QueueBackoffIntervalTooLarge"),
-    ConvertError::InvalidReadRangeLimit => String::from("InvalidReadRangeLimit"),
+    ConvertError::TooManyQueueUndeliveredKeys => {
+      String::from("TooManyQueueUndeliveredKeys")
+    }
+    ConvertError::TooManyQueueBackoffIntervals => {
+      String::from("TooManyQueueBackoffIntervals")
+    }
+    ConvertError::QueueBackoffIntervalTooLarge => {
+      String::from("QueueBackoffIntervalTooLarge")
+    }
+    ConvertError::InvalidReadRangeLimit => {
+      String::from("InvalidReadRangeLimit")
+    }
     ConvertError::DecodeError => String::from("DecodeError"),
     ConvertError::InvalidVersionstamp => String::from("InvalidVersionstamp"),
     ConvertError::InvalidMutationKind => String::from("InvalidMutationKind"),
-    ConvertError::InvalidMutationExpireAt => String::from("InvalidMutationExpireAt"),
-    ConvertError::InvalidMutationEnqueueDeadline => String::from("InvalidMutationEnqueueDeadline"),
+    ConvertError::InvalidMutationExpireAt => {
+      String::from("InvalidMutationExpireAt")
+    }
+    ConvertError::InvalidMutationEnqueueDeadline => {
+      String::from("InvalidMutationEnqueueDeadline")
+    }
     // ConvertError::TooManyWatchedKeys => String::from("TooManyWatchedKeys"),  // TODO waiting on watch pr
   }
 }
@@ -304,10 +337,14 @@ fn convert_error_to_anyhow(err: denokv_proto::ConvertError) -> anyhow::Error {
   anyhow::anyhow!(convert_error_to_str(err))
 }
 
-fn convert_sqlite_backend_error_to_anyhow(err: SqliteBackendError) -> anyhow::Error {
+fn convert_sqlite_backend_error_to_anyhow(
+  err: SqliteBackendError,
+) -> anyhow::Error {
   err.into()
 }
 
-fn convert_prost_decode_error_to_anyhow(err: prost::DecodeError) -> anyhow::Error {
+fn convert_prost_decode_error_to_anyhow(
+  err: prost::DecodeError,
+) -> anyhow::Error {
   err.into()
 }

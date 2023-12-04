@@ -614,7 +614,8 @@ fn requeue_message(
   if !backoff_schedule.is_empty() {
     // Requeue based on backoff schedule
     let new_ts = now + Duration::from_millis(backoff_schedule[0]);
-    let new_backoff_schedule = serde_json::to_string(&backoff_schedule[1..])?;
+    let new_backoff_schedule = serde_json::to_string(&backoff_schedule[1..])
+      .map_err(anyhow::Error::from)?;
     let changed =
       tx.prepare_cached(STATEMENT_QUEUE_ADD_READY)?
         .execute(params![

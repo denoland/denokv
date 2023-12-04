@@ -352,11 +352,13 @@ async fn metadata_endpoint(
   let Some(Json(req)) = maybe_req else {
     return Err(ApiError::MinumumProtocolVersion);
   };
-  if !req.supported_versions.contains(&2)
-    && !req.supported_versions.contains(&3)
-  {
+  let version = if req.supported_versions.contains(&3) {
+    3
+  } else if req.supported_versions.contains(&2) {
+    2
+  } else {
     return Err(ApiError::NoMatchingProtocolVersion);
-  }
+  };
   let Some(authorization) =
     headers.get("authorization").and_then(|v| v.to_str().ok())
   else {
@@ -372,7 +374,7 @@ async fn metadata_endpoint(
   }
   let expires_at = utc_now() + Duration::days(1);
   Ok(Json(DatabaseMetadata {
-    version: 2,
+    version,
     database_id: Uuid::nil(),
     endpoints: vec![EndpointInfo {
       url: Cow::Borrowed("/v2"),
@@ -484,7 +486,11 @@ async fn watch_endpoint(
     Bytes::from([&(data.len() as u32).to_le_bytes()[..], &data[..]].concat())
   });
 
-  Ok(StreamBody::new(body_stream))
+  let mut res = StreamBody::new(body_stream).into_response();
+  res
+    .headers_mut()
+    .insert("content-type", "application/octet-stream".parse().unwrap());
+  Ok(res)
 }
 
 #[debug_handler]

@@ -7,7 +7,10 @@ A [Deno KV](https://deno.com/kv) client library optimized for Node.js.
 - Access [Deno Deploy](https://deno.com/deploy) remote databases (or any
   endpoint implementing the open
   [KV Connect](https://github.com/denoland/denokv/blob/main/proto/kv-connect.md)
-  protocol) on Node, Bun, the browser, or any JavaScript environment.
+  protocol) on Node, Bun, or any JavaScript environment. 
+  - Most use cases will be server-side, but the remote client works directly in
+    the browser if you provide a custom `fetcher` to a server proxy
+    (Deno Deploy's endpoints don't currently allow CORS).
 - Create local KV databases backed by
   [SQLite](https://www.sqlite.org/index.html), using optimized native
   [NAPI](https://nodejs.org/docs/latest-v18.x/api/n-api.html) packages for
@@ -15,7 +18,7 @@ A [Deno KV](https://deno.com/kv) client library optimized for Node.js.
 - Create ephemeral in-memory KV instances backed by SQLite memory files or by a
   lightweight JS-only implementation for testing.
 - Zero JS dependencies, architecture-specific native code for SQLite backend
-  (see below)
+  (see below).
 - Simply call the exported `openKv` function (equiv to
   [`Deno.openKv`](https://deno.land/api?s=Deno.openKv&unstable)) with a url or
   local path to get started!
@@ -152,7 +155,8 @@ const kv = await openKv("http://localhost:4512/", { debug: true });
 
 ### Backend-specific options
 
-Each implementation supports different additional options:
+Each implementation supports different additional options,
+via the second parameter to `openKv`:
 
 _Remote backend_
 

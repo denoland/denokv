@@ -65,7 +65,7 @@ pub fn close(db_id: u32, debug: bool) {
     println!("[napi] close: db_id={:#?}", db_id)
   }
   let db = DBS.lock().unwrap().remove(&db_id);
-  db.map(|db| db.close());
+  if let Some(db) = db { db.close() };
 }
 
 #[napi]
@@ -96,7 +96,7 @@ pub async fn snapshot_read(
     .lock()
     .unwrap()
     .get(&db_id)
-    .map(|db| db.clone())
+    .cloned()
     .ok_or_else(|| anyhow::anyhow!("db not found"))?;
 
   let output_pb: pb::SnapshotReadOutput = db
@@ -136,7 +136,7 @@ pub async fn atomic_write(
     .lock()
     .unwrap()
     .get(&db_id)
-    .map(|db| db.clone())
+    .cloned()
     .ok_or_else(|| anyhow::anyhow!("db not found"))?;
 
   let output_pb: pb::AtomicWriteOutput = db
@@ -174,7 +174,7 @@ pub async fn dequeue_next_message(
     .lock()
     .unwrap()
     .get(&db_id)
-    .map(|db| db.clone())
+    .cloned()
     .ok_or_else(|| anyhow::anyhow!("db not found"))?;
 
   let opt_handle = db

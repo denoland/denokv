@@ -614,18 +614,16 @@ fn requeue_message(
   if !backoff_schedule.is_empty() {
     // Requeue based on backoff schedule
     let new_ts = now + Duration::from_millis(backoff_schedule[0]);
-    let new_backoff_schedule = serde_json::to_string(&backoff_schedule[1..])
-      .map_err(anyhow::Error::from)?;
-    let changed = tx
-      .prepare_cached(STATEMENT_QUEUE_ADD_READY)?
-      .execute(params![
-        new_ts.timestamp_millis(),
-        id,
-        &data,
-        &new_backoff_schedule,
-        &keys_if_undelivered
-      ])
-      .unwrap();
+    let new_backoff_schedule = serde_json::to_string(&backoff_schedule[1..])?;
+    let changed =
+      tx.prepare_cached(STATEMENT_QUEUE_ADD_READY)?
+        .execute(params![
+          new_ts.timestamp_millis(),
+          id,
+          &data,
+          &new_backoff_schedule,
+          &keys_if_undelivered
+        ])?;
     assert_eq!(changed, 1);
     requeued = true;
   } else if !keys_if_undelivered.is_empty() {

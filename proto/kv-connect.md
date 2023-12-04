@@ -63,7 +63,7 @@ identifying the client library and version that is being used. The request MAY
 include a JSON body that adheres to the JSON schema defined in the
 `schema/kv-metadata-exchange-request.json` file. The `supportedVersions`
 property of the request body MUST be an array of numbers that represents the KV
-Connect protocol versions that the client supports (e.g. `[1, 2]`). If the
+Connect protocol versions that the client supports (e.g. `[1, 2, 3]`). If the
 request body is not included, the client is assumed to support only version 1 of
 the KV Connect protocol.
 
@@ -218,11 +218,6 @@ There are two types of requests that the client may send to the server:
 
 A _Snapshot Read Request_ is used to read some values from the database.
 
-<!-- A _Snapshot Read Request_ can either be "single shot" or "watching". A "single
-shot" _Snapshot Read Request_ is used to read a given set of values from the
-database once. A "watching" _Snapshot Read Request_ is used to read a given set
-of values from the database once and then receive a stream of  -->
-
 A _Snapshot Read Request_ can either be strongly consistent or eventually
 consistent. A strongly consistent _Snapshot Read Request_ MUST be sent to an
 endpoint that has a `consistency` property that is equal to `strong`. An
@@ -241,10 +236,6 @@ the resolved URL of the selected endpoint. The request body MUST be a Protobuf
 message in the format `com.deno.kv.datapath.SnapshotRead` (defined in the
 `schema/datapath.proto` file in this repository).
 
-<!-- If the client wants to receive a stream of updates from the server, rather than
-just a single response, the client MUST include a `x-denokv-stream` header with
-the value `true`. -->
-
 Upon receiving the POST request, the server MUST verify that the request body
 adheres to the Protobuf schema for the `com.deno.kv.datapath.SnapshotRead`
 message. If the request body is invalid, the server MUST respond with a 4xx
@@ -258,14 +249,6 @@ plain text body with a human readable error message in this case.
 The server MAY perform quota checks on the request. If the request is rejected
 due to quota limits, the server MUST respond with a 4xx class response and a
 plain text body containing a human readable error message.
-
-<!-- If the `x-denokv-stream` header is included and has the value `true`, the server
-MUST perform the requested snapshot read operation. If the operation fails due
-to a malformed request, the server MUST respond with a 4xx class response
-containing a plain text body with a human readable error message. If the
-operation succeeds the server must respond with a 200 OK response. The response
-MUST include a `Content-Type` header with the value `...`. The response body
-MUST be a stream of Protobuf -->
 
 The server MUST perform the requested snapshot read operation. The server MUST
 respond with a 200 OK response. The response MUST include a `Content-Type`
@@ -291,10 +274,17 @@ client MUST verify that the response body adheres to the Protobuf schema for the
 invalid, the client MUST fatally abort the request and display the error message
 to the user.
 
-If the response has a `read_disabled` field set to `true`, or if the request was
-strongly consistent but the `read_is_strongly_consistent` field is set to
-`false`, the client SHOULD perform a metadata exchange with the server to get a
-new list of endpoints, and then retry the request.
+If the protocol version is 3 or higher, the client MUST read the `status` field
+of the response. If the response has a `status` field set to `SR_UNSPECIFIED`,
+the client MUST fatally abort the request and display an error message to the
+user.
+
+If the protocol version is 3 or higher and the `status` field is set to
+`SR_READ_DISABLED`, or if the protocol version is 2 or lower and the
+`read_disabled` field is set to `true`, or if the request was strongly
+consistent but the `read_is_strongly_consistent` field is set to `false`, the
+client SHOULD perform a metadata exchange with the server to get a new list of
+endpoints, and then retry the request.
 
 If the ranges in the response match the ranges in the request, the client SHOULD
 return the values to the user.
@@ -305,7 +295,7 @@ Example snapshot read request:
 POST /v2/snapshot_read HTTP/1.1
 Authorization: Bearer 123abc456def789ghi
 Content-Type: application/x-protobuf
-x-denokv-version: 2
+x-denokv-version: 3
 x-denokv-database-id: a1b2c3d4-e5f6-7g8h-9i1j-2k3l4m5n6o7p
 User-Agent: Deno/1.38.0
 Content-Length: 45
@@ -337,11 +327,11 @@ have lower latency.
 The client sends an _Atomic Write Request_ to the server by sending a POST
 request to the `<endpointUrl>/atomic_write` endpoint, where `<endpointUrl>` is
 the resolved URL of the selected endpoint. The request body MUST be a Protobuf
-message in the format `com.deno.kv.datapath.AtomicWriteRequest` (defined in the
+message in the format `com.deno.kv.datapath.AtomicWrite` (defined in the
 `schema/datapath.proto` file in this repository).
 
 Upon receiving the POST request, the server MUST verify that the request body
-adheres to the Protobuf schema for the `com.deno.kv.datapath.AtomicWriteRequest`
+adheres to the Protobuf schema for the `com.deno.kv.datapath.AtomicWrite`
 message. If the request body is invalid, the server MUST respond with a 4xx
 class HTTP status response and a plain text body containing a human readable
 error message.
@@ -411,6 +401,102 @@ Content-Length: 12
 <protobuf message>
 ```
 
+#### Watch Request
+
+A _Watch Request_ is used to watch for changes to keys in the database.
+
+A _Watch Request_ is always eventually consistent, so it MUST be sent to an
+endpoint that has a `consistency` property that is either equal to `strong` or
+`eventual`.
+
+To determine which endpoint to send a _Watch Request_ to, the client MUST first
+narrow down the list of endpoints to only include endpoints that have a valid
+consistency property for the type of _Watch Request_ that the client wants to
+perform. From this list, the client MAY make requests to any endpoint, but the
+client SHOULD prefer endpoints that have lower latency.
+
+The client sends a _Watch Request_ to the server by sending a POST request to
+the `<endpointUrl>/watch` endpoint, where `<endpointUrl>` is the resolved URL of
+the selected endpoint. The request body MUST be a Protobuf message in the format
+`com.deno.kv.datapath.Watch` (defined in the `schema/datapath.proto` file in
+this repository).
+
+Upon receiving the POST request, the server MUST verify that the request body
+adheres to the Protobuf schema for the `com.deno.kv.datapath.Watch` message. If
+the request body is invalid, the server MUST respond with a 4xx class HTTP
+status response and a plain text body containing a human readable error message.
+
+The server MAY return a 5xx class HTTP status response at any time if the server
+is unable to process the request right now due to a temporary condition, for
+example an internal server error or rate limiting. The server SHOULD include a
+plain text body with a human readable error message in this case.
+
+The server MAY perform quota checks on the request. If the request is rejected
+due to quota limits, the server MUST respond with a 4xx class HTTP status
+response and a plain text body containing a human readable error message.
+
+The server MUST perform a snapshot read operation for the requested keys. The
+server MUST respond with a 200 OK response. The response MUST include a
+`Content-Type` header with the value `application/octet-stream`. The response
+body MUST be a stream. The first message of this stream MUST be a Protobuf
+encoded message in the format `com.deno.kv.datapath.WatchOutput`, prefixed with
+a 4 byte little endian integer that represents the length of the message.
+
+When any of the watched keys change, the server MUST send a Protobuf encoded
+message in the format `com.deno.kv.datapath.WatchOutput`, prefixed with a 4 byte
+little endian integer that represents the length of the message, to the client
+over the same stream. The server MAY collapse multiple changes into a single
+notification, as long as each message represents a consistent snapshot of the
+keys that the client is watching.
+
+The server MAY send a zero length message to the client over the stream at any
+time to indicate that the server is still alive. These messages must be
+structured as a 4 byte little endian integer encoding of 0, followed by no data.
+
+If the client fails to receive a response from the server due to a network
+error, or a 5xx class HTTP status, the client SHOULD retry the request using an
+exponential backoff strategy with unlimited retries.
+
+The client MUST verify that the response is a 200 OK response. If the response
+is a 4xx class error response, the client MUST fatally abort the request and
+display the error message to the user.
+
+If the response is a 200 OK response, the client MUST parse each message in the
+stream by first reading a 4 byte little endian integer that represents the
+length of the message, and then reading that many bytes from the stream. If the
+length of the message is 0, the client MUST ignore the message and wait for the
+next message. If the length of the message is greater than 0, the client MUST
+then verify that the message adheres to the Protobuf schema for the
+`com.deno.kv.datapath.WatchOutput` message. If the message is invalid, the
+client MUST fatally abort the request and display the error message to the user.
+
+If the message is valid, the client MUST read the `status` field of the message
+and verify that it is set to `SR_SUCCESS`. If the `status` field is set to
+`SR_READ_DISABLED`, the client SHOULD perform a metadata exchange with the
+server to get a new list of endpoints, and then retry the request. If the
+`status` field is set to any other value, the client MUST fatally abort the
+request and display an error message to the user.
+
+If the message is valid, the client MUST yield the message to the user, and then
+continue reading messages from the stream.
+
+Example watch request:
+
+```http
+POST /v3/watch HTTP/1.1
+x-denokv-version: 3
+x-denokv-database-id: a1b2c3d4-e5f6-7g8h-9i1j-2k3l4m5n6o7p
+
+<protobuf message>
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/octet-stream
+
+<u32 little endian><protobuf message><u32 little endian><protobuf message>...
+```
+
 ## Protocol Versions
 
 The KV Connect protocol is versioned. The version of the protocol is negotiated
@@ -448,3 +534,11 @@ Version 2 adds the following features:
   has a strongly consistent view of the database or not. This allows the client
   to retry the request if the server does not have a strongly consistent view of
   the database.
+
+### Version 3
+
+Version 3 adds the following features:
+
+- The `status` field is added to the response body of _Snapshot Read Requests_
+  and is used instead of the `read_disabled` boolean field by the client.
+- The "Watch" data path operation is added.

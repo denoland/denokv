@@ -329,7 +329,6 @@ fn convert_error_to_str(err: denokv_proto::ConvertError) -> String {
     ConvertError::InvalidMutationEnqueueDeadline => {
       String::from("InvalidMutationEnqueueDeadline")
     }
-    // ConvertError::TooManyWatchedKeys => String::from("TooManyWatchedKeys"),  // TODO waiting on watch pr
   }
 }
 

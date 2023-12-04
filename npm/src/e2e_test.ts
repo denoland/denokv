@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import { chunk } from "https://deno.land/std@0.208.0/collections/chunk.ts";
 import { parseArgs as parseFlags } from "https://deno.land/std@0.208.0/cli/parse_args.ts";
 import {

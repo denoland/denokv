@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import { assertEquals } from "https://deno.land/std@0.208.0/assert/assert_equals.ts";
 import { assertThrows } from "https://deno.land/std@0.208.0/assert/assert_throws.ts";
 import { _KvU64 } from "./kv_u64.ts";

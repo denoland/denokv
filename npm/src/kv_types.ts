@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 // deno-lint-ignore no-explicit-any
 (Symbol as any).dispose ??= Symbol("Symbol.dispose"); // polyfill if needed
 

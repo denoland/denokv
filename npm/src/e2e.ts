@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 // deno-lint-ignore-file no-explicit-any
 import { assert } from "https://deno.land/std@0.208.0/assert/assert.ts";
 import { assertEquals } from "https://deno.land/std@0.208.0/assert/assert_equals.ts";

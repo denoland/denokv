@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import test from 'ava'
 
 import { open, close, atomicWrite, dequeueNextMessage, finishMessage, snapshotRead } from '../index'

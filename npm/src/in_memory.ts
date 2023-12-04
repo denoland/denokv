@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import { assertInstanceOf } from "https://deno.land/std@0.208.0/assert/assert_instance_of.ts";
 import { RedBlackTree } from "https://deno.land/std@0.208.0/data_structures/red_black_tree.ts";
 import { compareBytes, equalBytes } from "./bytes.ts";

@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 // https://chromium.googlesource.com/v8/v8/+/refs/heads/main/src/objects/value-serializer.cc
 
 import { checkEnd } from "./bytes.ts";

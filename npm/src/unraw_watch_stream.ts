@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import { KvEntryMaybe } from "./kv_types.ts";
 import { defer } from "./proto/runtime/async/observer.ts";
 

@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import { decodeHex, encodeHex } from "./bytes.ts";
 import {
   checkExpireIn,

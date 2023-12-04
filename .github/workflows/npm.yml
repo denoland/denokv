@@ -15,7 +15,6 @@ env:
       - 'npm/src/**'
       - 'npm/napi/**'
       - '!npm/napi/**/*.md'
-      - '!npm/napi/LICENSE'
       - '!npm/napi/**/*.gitignore'
       - '!npm/napi/.editorconfig'
       - '!npm/napi/docs/**'
@@ -89,14 +88,9 @@ jobs:
             .cargo-cache
             target/
           key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
-      - uses: goto-bus-stop/setup-zig@v2
-        if: ${{ matrix.settings.target == 'armv7-unknown-linux-gnueabihf' }}
-        with:
-          version: 0.11.0
-      - name: Setup toolchain
-        run: ${{ matrix.settings.setup }}
-        if: ${{ matrix.settings.setup }}
-        shell: bash
+      - name: Check formatting
+        run: cargo fmt -- --check
+        working-directory: ./npm/napi
       - name: Setup node x86
         if: matrix.settings.target == 'i686-pc-windows-msvc'
         run: yarn config set supportedArchitectures.cpu "ia32"
@@ -124,6 +118,10 @@ jobs:
         run: ${{ matrix.settings.build }}
         if: ${{ !matrix.settings.docker }}
         shell: bash
+        working-directory: ./npm/napi
+      - name: Check linting # needs to run after build so protoc is available
+        run: cargo clippy --release --all-targets --all-features -- -D clippy::all
+        if: ${{ !matrix.settings.docker }}
         working-directory: ./npm/napi
       - name: Upload artifact
         uses: actions/upload-artifact@v3
@@ -242,7 +240,6 @@ jobs:
           VERSION=0.0.0-dryrun DRY_RUN=1 ../.github/npm_publish.sh
         working-directory: ./npm
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish
         if: github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
@@ -258,6 +255,5 @@ jobs:
           fi
         working-directory: ./npm
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           TAG_NAME: ${{ github.ref_name }}

@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 const max = (1n << 64n) - 1n;
 
 export class _KvU64 {

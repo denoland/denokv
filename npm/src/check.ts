@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import { KvKey } from "./kv_types.ts";
 
 export function isRecord(obj: unknown): obj is Record<string, unknown> {

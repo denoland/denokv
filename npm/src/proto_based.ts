@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import { decodeHex, encodeHex, equalBytes } from "./bytes.ts";
 import { packKey, unpackKey } from "./kv_key.ts";
 import {

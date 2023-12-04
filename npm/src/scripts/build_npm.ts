@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import { join } from "https://deno.land/std@0.208.0/path/join.ts";
 import {
   build,
@@ -82,9 +84,9 @@ await build({
   },
   async postBuild() {
     // steps to run after building and before running the tests
-    await Deno.copyFile("../LICENSE", join(outDir, "LICENSE"));
+    await Deno.copyFile("LICENSE", join(outDir, "LICENSE"));
     await Deno.copyFile(
-      "napi/README.md",
+      "README.md",
       join(outDir, "README.md"),
     );
     const napiIndexJs = generateNapiIndex({

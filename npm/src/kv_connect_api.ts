@@ -1,3 +1,5 @@
+// Copyright 2023 the Deno authors. All rights reserved. MIT license.
+
 import { encodeBinary as encodeWatch } from "./proto/messages/com/deno/kv/datapath/Watch.ts";
 import { encodeBinary as encodeAtomicWrite } from "./proto/messages/com/deno/kv/datapath/AtomicWrite.ts";
 import { encodeBinary as encodeSnapshotRead } from "./proto/messages/com/deno/kv/datapath/SnapshotRead.ts";

@@ -2,11 +2,14 @@
 
 mod time;
 
+use std::io;
 use std::ops::Sub;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use async_stream::try_stream;
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::DateTime;
@@ -24,27 +27,41 @@ use denokv_proto::QueueMessageHandle;
 use denokv_proto::ReadRange;
 use denokv_proto::ReadRangeOutput;
 use denokv_proto::SnapshotReadOptions;
+use denokv_proto::WatchKeyOutput;
+use futures::Stream;
+use futures::StreamExt;
+use futures::TryStreamExt;
+use log::debug;
 use log::error;
 use log::warn;
+use prost::Message;
 use rand::Rng;
+use reqwest::Response;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use time::utc_now;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+use tokio_util::codec::LengthDelimitedCodec;
+use tokio_util::io::StreamReader;
 use url::Url;
 use uuid::Uuid;
 
 use denokv_proto::datapath as pb;
+
+const DATAPATH_BACKOFF_BASE: Duration = Duration::from_millis(200);
+const METADATA_BACKOFF_BASE: Duration = Duration::from_secs(5);
 
 pub struct MetadataEndpoint {
   pub url: Url,
   pub access_token: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ProtocolVersion {
   V1,
   V2,
+  V3,
 }
 
 #[derive(PartialEq, Eq)]
@@ -73,7 +90,7 @@ enum MetadataState {
   Error(Arc<String>),
 }
 
-pub trait RemotePermissions {
+pub trait RemotePermissions: Clone + 'static {
   fn check_net_url(&self, url: &Url) -> Result<(), anyhow::Error>;
 }
 
@@ -83,10 +100,11 @@ enum RetryableResult<T, E> {
   Err(E),
 }
 
+#[derive(Clone)]
 pub struct Remote<P: RemotePermissions> {
   permissions: P,
   client: reqwest::Client,
-  metadata_refresher: JoinHandle<()>,
+  metadata_refresher: Arc<JoinHandle<()>>,
   metadata: watch::Receiver<MetadataState>,
 }
 
@@ -105,19 +123,16 @@ impl<P: RemotePermissions> Remote<P> {
     Self {
       client,
       permissions,
-      metadata_refresher,
+      metadata_refresher: Arc::new(metadata_refresher),
       metadata: rx,
     }
   }
 
-  pub async fn call_data<
-    Req: prost::Message,
-    Resp: prost::Message + Default,
-  >(
+  async fn call_raw<Req: prost::Message>(
     &self,
     method: &'static str,
     req: Req,
-  ) -> Result<Resp, anyhow::Error> {
+  ) -> Result<(Response, ProtocolVersion), anyhow::Error> {
     let attempt = 0;
     let req_body = Bytes::from(req.encode_to_vec());
     loop {
@@ -163,6 +178,9 @@ impl<P: RemotePermissions> Remote<P> {
         ProtocolVersion::V2 => req
           .header("x-denokv-database-id", metadata.database_id.to_string())
           .header("x-denokv-version", "2"),
+        ProtocolVersion::V3 => req
+          .header("x-denokv-database-id", metadata.database_id.to_string())
+          .header("x-denokv-version", "3"),
       };
 
       let resp = match req.send().await {
@@ -174,7 +192,7 @@ impl<P: RemotePermissions> Remote<P> {
             "KV Connect failed to call '{}' (status={}): {}",
             url, status, body
           );
-          randomized_exponential_backoff(Duration::from_secs(5), attempt).await;
+          randomized_exponential_backoff(DATAPATH_BACKOFF_BASE, attempt).await;
           continue;
         }
         Ok(resp) => {
@@ -189,26 +207,54 @@ impl<P: RemotePermissions> Remote<P> {
         }
         Err(err) => {
           error!("KV Connect failed to call '{}': {}", url, err);
-          randomized_exponential_backoff(Duration::from_secs(5), attempt).await;
+          randomized_exponential_backoff(DATAPATH_BACKOFF_BASE, attempt).await;
           continue;
         }
       };
 
-      let resp_body = match resp.bytes().await {
-        Ok(resp_body) => resp_body,
-        Err(err) => {
-          return Err(anyhow::anyhow!(
-            "KV Connect failed to read response body: {}",
-            err
-          ));
-        }
-      };
-
-      let resp = Resp::decode(resp_body)
-        .context("KV Connect failed to decode response")?;
-
-      return Ok(resp);
+      return Ok((resp, metadata.version));
     }
+  }
+
+  async fn call_stream<Req: prost::Message>(
+    &self,
+    method: &'static str,
+    req: Req,
+  ) -> Result<
+    (
+      impl Stream<Item = Result<Bytes, io::Error>>,
+      ProtocolVersion,
+    ),
+    anyhow::Error,
+  > {
+    let (resp, version) = self.call_raw(method, req).await?;
+    let stream = resp
+      .bytes_stream()
+      .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+    Ok((stream, version))
+  }
+
+  async fn call_data<Req: prost::Message, Resp: prost::Message + Default>(
+    &self,
+    method: &'static str,
+    req: Req,
+  ) -> Result<(Resp, ProtocolVersion), anyhow::Error> {
+    let (resp, version) = self.call_raw(method, req).await?;
+
+    let resp_body = match resp.bytes().await {
+      Ok(resp_body) => resp_body,
+      Err(err) => {
+        return Err(anyhow::anyhow!(
+          "KV Connect failed to read response body: {}",
+          err
+        ));
+      }
+    };
+
+    let resp = Resp::decode(resp_body)
+      .context("KV Connect failed to decode response")?;
+
+    Ok((resp, version))
   }
 }
 
@@ -259,7 +305,7 @@ async fn metadata_refresh_task(
           // The receiver has been dropped, so we can stop now.
           return;
         }
-        randomized_exponential_backoff(Duration::from_secs(5), attempts).await;
+        randomized_exponential_backoff(METADATA_BACKOFF_BASE, attempts).await;
       }
       RetryableResult::Err(err) => {
         attempts += 1;
@@ -267,7 +313,7 @@ async fn metadata_refresh_task(
           // The receiver has been dropped, so we can stop now.
           return;
         }
-        randomized_exponential_backoff(Duration::from_secs(5), attempts).await;
+        randomized_exponential_backoff(METADATA_BACKOFF_BASE, attempts).await;
       }
     }
   }
@@ -284,7 +330,7 @@ async fn fetch_metadata(
       format!("Bearer {}", metadata_endpoint.access_token),
     )
     .json(&MetadataExchangeRequest {
-      supported_versions: vec![1, 2],
+      supported_versions: vec![1, 2, 3],
     })
     .send()
     .await
@@ -365,12 +411,13 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
   let version = match version.version {
     1 => ProtocolVersion::V1,
     2 => ProtocolVersion::V2,
+    3 => ProtocolVersion::V3,
     version => {
       return Err(format!("unsupported metadata version: {}", version));
     }
   };
 
-  // V1 and V2 have the same shape
+  // V1, V2, and V3 have the same shape
   let metadata: DatabaseMetadata = match serde_json::from_str(body) {
     Ok(metadata) => metadata,
     Err(err) => {
@@ -382,7 +429,7 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
   for endpoint in metadata.endpoints {
     let url = match version {
       ProtocolVersion::V1 => Url::parse(&endpoint.url),
-      ProtocolVersion::V2 => {
+      ProtocolVersion::V2 | ProtocolVersion::V3 => {
         Url::options().base_url(Some(base_url)).parse(&endpoint.url)
       }
     }
@@ -432,12 +479,30 @@ impl<P: RemotePermissions> Database for Remote<P> {
       .collect();
     let req = pb::SnapshotRead { ranges };
 
-    let res: pb::SnapshotReadOutput =
+    let (res, version): (pb::SnapshotReadOutput, _) =
       self.call_data("snapshot_read", req).await?;
 
-    if res.read_disabled {
-      // TODO: this should result in a retry after a forced metadata refresh.
-      return Err(anyhow::anyhow!("Reads are disabled for this database."));
+    match version {
+      ProtocolVersion::V1 | ProtocolVersion::V2 => {
+        if res.read_disabled {
+          // TODO: this should result in a retry after a forced metadata refresh.
+          return Err(anyhow::anyhow!("Reads are disabled for this database."));
+        }
+      }
+      ProtocolVersion::V3 => match res.status() {
+        pb::SnapshotReadStatus::SrSuccess => {}
+        pb::SnapshotReadStatus::SrReadDisabled => {
+          // TODO: this should result in a retry after a forced metadata refresh.
+          return Err(anyhow::anyhow!("Reads are disabled for this database."));
+        }
+        pb::SnapshotReadStatus::SrUnspecified => {
+          Err(anyhow::anyhow!(
+            "Unspecified read error (code={}).",
+            res.status
+          ))?;
+          unreachable!();
+        }
+      },
     }
 
     if !res.read_is_strongly_consistent
@@ -560,7 +625,7 @@ impl<P: RemotePermissions> Database for Remote<P> {
       enqueues: Vec::new(),
     };
 
-    let res: pb::AtomicWriteOutput =
+    let (res, _): (pb::AtomicWriteOutput, _) =
       self.call_data("atomic_write", req).await?;
 
     match res.status() {
@@ -582,6 +647,87 @@ impl<P: RemotePermissions> Database for Remote<P> {
   ) -> Result<Option<Self::QMH>, anyhow::Error> {
     warn!("KV Connect does not support queues.");
     std::future::pending().await
+  }
+
+  fn watch(
+    &self,
+    keys: Vec<Vec<u8>>,
+  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, anyhow::Error>>>>
+  {
+    let this = self.clone();
+    let stream = try_stream! {
+      let mut attempt = 0;
+       loop {
+        attempt += 1;
+        let req = pb::Watch {
+          keys: keys.iter().map(|key| pb::WatchKey { key: key.clone() }).collect(),
+        };
+
+        let (stream, _) = this.call_stream("watch", req).await?;
+        let reader = StreamReader::new(stream);
+        let codec = LengthDelimitedCodec::builder()
+          .little_endian()
+          .length_field_length(4)
+          .max_frame_length(16 * 1048576)
+          .new_codec();
+
+        let mut frames = tokio_util::codec::FramedRead::new(reader, codec);
+        'decode: loop {
+          let res = frames.next().await;
+          let frame = match res {
+            Some(Ok(frame)) if frame.is_empty() => continue, // ping, ignore
+            Some(Ok(frame)) => frame,
+            Some(Err(err)) => {
+              debug!("KV Connect watch disconnected (attempt={}): {}", attempt, err);
+              break 'decode;
+            }
+            None => {
+              break 'decode;
+            }
+          };
+
+          let data = pb::WatchOutput::decode(frame).context("Failed to decode watch output")?;
+          match data.status() {
+            pb::SnapshotReadStatus::SrSuccess => {}
+            pb::SnapshotReadStatus::SrReadDisabled => {
+              // TODO: this should result in a retry after a forced metadata refresh.
+              Err(anyhow::anyhow!("Reads are disabled for this database."))?;
+              unreachable!();
+            }
+            pb::SnapshotReadStatus::SrUnspecified => {
+              Err(anyhow::anyhow!("Unspecified read error (code={}).", data.status))?;
+              unreachable!();
+            }
+          }
+
+          let mut outputs = Vec::new();
+          for key in data.keys {
+            if !key.changed {
+              outputs.push(WatchKeyOutput::Unchanged);
+            } else {
+              let entry = match key.entry_if_changed {
+                Some(entry) => {
+                  let value = decode_value(entry.value, entry.encoding as i64)
+                    .ok_or_else(|| anyhow::anyhow!("Unknown encoding {}", entry.encoding))?;
+                  Some(KvEntry {
+                    key: entry.key,
+                    value,
+                    versionstamp: <[u8; 10]>::try_from(&entry.versionstamp[..])?,
+                  })
+                },
+                None => None,
+              };
+              outputs.push(WatchKeyOutput::Changed { entry });
+            }
+          }
+          yield outputs;
+        }
+
+        // The stream disconnected, so retry after a short delay.
+        randomized_exponential_backoff(DATAPATH_BACKOFF_BASE, attempt).await;
+      }
+    };
+    Box::pin(stream)
   }
 
   fn close(&self) {}

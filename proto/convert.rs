@@ -7,9 +7,11 @@ use crate::AtomicWrite;
 use crate::Check;
 use crate::CommitResult;
 use crate::Enqueue;
+use crate::KvEntry;
 use crate::Mutation;
 use crate::MutationKind;
 use crate::ReadRangeOutput;
+use crate::WatchKeyOutput;
 
 use crate::decode_value;
 use crate::encode_value;
@@ -23,6 +25,7 @@ pub enum ConvertError {
   ReadRangeTooLarge,
   AtomicWriteTooLarge,
   TooManyReadRanges,
+  TooManyWatchedKeys,
   TooManyChecks,
   TooManyMutations,
   TooManyQueueUndeliveredKeys,
@@ -172,12 +175,11 @@ impl TryFrom<pb::AtomicWrite> for AtomicWrite {
         return Err(ConvertError::ValueTooLong);
       }
       total_payload_size += enqueue.payload.len();
-      if enqueue.kv_keys_if_undelivered.len()
-        > limits::MAX_QUEUE_UNDELIVERED_KEYS
+      if enqueue.keys_if_undelivered.len() > limits::MAX_QUEUE_UNDELIVERED_KEYS
       {
         return Err(ConvertError::TooManyQueueUndeliveredKeys);
       }
-      for key in &enqueue.kv_keys_if_undelivered {
+      for key in &enqueue.keys_if_undelivered {
         if key.len() > limits::MAX_WRITE_KEY_SIZE_BYTES {
           return Err(ConvertError::KeyTooLong);
         }
@@ -212,7 +214,7 @@ impl TryFrom<pb::AtomicWrite> for AtomicWrite {
           Some(enqueue.backoff_schedule)
         },
         deadline,
-        keys_if_undelivered: enqueue.kv_keys_if_undelivered,
+        keys_if_undelivered: enqueue.keys_if_undelivered,
       });
     }
 
@@ -232,19 +234,7 @@ impl From<Vec<ReadRangeOutput>> for pb::SnapshotReadOutput {
   fn from(result_ranges: Vec<ReadRangeOutput>) -> pb::SnapshotReadOutput {
     let mut ranges = Vec::with_capacity(result_ranges.len());
     for range in result_ranges {
-      let values = range
-        .entries
-        .into_iter()
-        .map(|entry| {
-          let (value, encoding) = encode_value(&entry.value);
-          pb::KvEntry {
-            key: entry.key,
-            value: value.into_owned(),
-            encoding: encoding as i32,
-            versionstamp: entry.versionstamp.to_vec(),
-          }
-        })
-        .collect();
+      let values = range.entries.into_iter().map(Into::into).collect();
       ranges.push(pb::ReadRangeOutput { values });
     }
 
@@ -252,6 +242,7 @@ impl From<Vec<ReadRangeOutput>> for pb::SnapshotReadOutput {
       ranges,
       read_disabled: false,
       read_is_strongly_consistent: true,
+      status: pb::SnapshotReadStatus::SrSuccess as i32,
     }
   }
 }
@@ -269,6 +260,65 @@ impl From<Option<CommitResult>> for pb::AtomicWriteOutput {
         versionstamp: commit_result.versionstamp.to_vec(),
         ..Default::default()
       },
+    }
+  }
+}
+
+impl From<KvEntry> for pb::KvEntry {
+  fn from(entry: KvEntry) -> Self {
+    let (value, encoding) = encode_value(&entry.value);
+    pb::KvEntry {
+      key: entry.key,
+      value: value.into_owned(),
+      encoding: encoding as i32,
+      versionstamp: entry.versionstamp.to_vec(),
+    }
+  }
+}
+
+impl TryFrom<pb::Watch> for Vec<Vec<u8>> {
+  type Error = ConvertError;
+
+  fn try_from(value: pb::Watch) -> Result<Self, Self::Error> {
+    if value.keys.len() > limits::MAX_WATCHED_KEYS {
+      return Err(ConvertError::TooManyWatchedKeys);
+    }
+
+    value
+      .keys
+      .into_iter()
+      .map(|key| {
+        if key.key.len() > limits::MAX_WRITE_KEY_SIZE_BYTES {
+          return Err(ConvertError::KeyTooLong);
+        }
+        Ok(key.key)
+      })
+      .collect::<Result<Vec<_>, _>>()
+  }
+}
+
+impl From<Vec<WatchKeyOutput>> for pb::WatchOutput {
+  fn from(watch_outputs: Vec<WatchKeyOutput>) -> Self {
+    let mut keys = Vec::with_capacity(watch_outputs.len());
+    for key in watch_outputs {
+      match key {
+        WatchKeyOutput::Unchanged => {
+          keys.push(pb::WatchKeyOutput {
+            changed: false,
+            ..Default::default()
+          });
+        }
+        WatchKeyOutput::Changed { entry } => {
+          keys.push(pb::WatchKeyOutput {
+            changed: true,
+            entry_if_changed: entry.map(Into::into),
+          });
+        }
+      }
+    }
+    pb::WatchOutput {
+      status: pb::SnapshotReadStatus::SrSuccess as i32,
+      keys,
     }
   }
 }

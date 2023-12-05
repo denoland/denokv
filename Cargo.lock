@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "denokv"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -860,7 +860,7 @@ dependencies = [
 
 [[package]]
 name = "denokv_timemachine"
-version = "0.2.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",

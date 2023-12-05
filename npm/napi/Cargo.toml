@@ -10,6 +10,7 @@ version = "0.0.0" # never published
 crate-type = ["cdylib"]
 
 [dependencies]
+futures = "0.3.28"
 napi = {version="2", features=["async","anyhow"]}
 napi-derive = "2"
 denokv_sqlite = { path = "../../sqlite" }

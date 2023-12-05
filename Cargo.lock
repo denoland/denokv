@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "denokv"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -801,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "denokv_proto"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "denokv_remote"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "denokv_sqlite"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -847,6 +847,7 @@ dependencies = [
  "chrono",
  "denokv_proto",
  "futures",
+ "hex",
  "log",
  "num-bigint",
  "rand",
@@ -859,7 +860,7 @@ dependencies = [
 
 [[package]]
 name = "denokv_timemachine"
-version = "0.2.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",

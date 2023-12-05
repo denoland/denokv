@@ -323,6 +323,7 @@ pub enum MutationKind {
   Sum(KvValue),
   Min(KvValue),
   Max(KvValue),
+  SetSuffixVersionstampedKey(KvValue),
 }
 
 impl MutationKind {
@@ -332,6 +333,7 @@ impl MutationKind {
       MutationKind::Sum(value) => Some(value),
       MutationKind::Min(value) => Some(value),
       MutationKind::Max(value) => Some(value),
+      MutationKind::SetSuffixVersionstampedKey(value) => Some(value),
       MutationKind::Delete => None,
     }
   }

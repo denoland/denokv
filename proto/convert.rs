@@ -148,6 +148,11 @@ impl TryFrom<pb::AtomicWrite> for AtomicWrite {
             .ok_or(ConvertError::DecodeError)?;
           MutationKind::Max(value)
         }
+        (pb::MutationType::MSetSuffixVersionstampedKey, Some(value)) => {
+          let value = decode_value(value.data, value.encoding as i64)
+            .ok_or(ConvertError::DecodeError)?;
+          MutationKind::SetSuffixVersionstampedKey(value)
+        }
         _ => return Err(ConvertError::InvalidMutationKind),
       };
       let expire_at = match mutation.expire_at_ms {

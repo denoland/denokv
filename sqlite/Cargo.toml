@@ -21,6 +21,7 @@ async-trait.workspace = true
 chrono.workspace = true
 denokv_proto.workspace = true
 futures.workspace = true
+hex.workspace = true
 log.workspace = true
 num-bigint.workspace = true
 rand.workspace = true

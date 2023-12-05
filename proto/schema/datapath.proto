@@ -135,6 +135,8 @@ enum MutationType {
   M_MAX = 4;
   // Max the stored value with the new value. Both values must be LE64 encoded.
   M_MIN = 5;
+  // Set the value, with the versionstamp appended to the end of the key as a string.
+  M_SET_SUFFIX_VERSIONSTAMPED_KEY = 9;
 }
 
 // The encoding of a value.

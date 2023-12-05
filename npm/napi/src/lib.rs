@@ -1,18 +1,16 @@
 // Copyright 2023 the Deno authors. All rights reserved. MIT license.
 
 #![deny(clippy::all)]
-use denokv_proto::ConvertError;
-use denokv_sqlite::SqliteBackendError;
-// use denokv_proto::datapath::SnapshotReadStatus; // TODO waiting on watch pr
-// use denokv_proto::datapath::WatchOutput;
-// use denokv_sqlite::SqliteNotifier;
 use denokv_proto::datapath as pb;
 use denokv_proto::Consistency;
+use denokv_proto::ConvertError;
 use denokv_proto::ReadRange;
 use denokv_proto::SnapshotReadOptions;
 use denokv_sqlite::Connection;
 use denokv_sqlite::Sqlite;
+use denokv_sqlite::SqliteBackendError;
 use denokv_sqlite::SqliteMessageHandle;
+use denokv_sqlite::SqliteNotifier;
 use napi::bindgen_prelude::{Buffer, Either, Result, Undefined};
 use napi_derive::napi;
 use once_cell::sync::Lazy;
@@ -24,9 +22,7 @@ use std::io::Cursor;
 use std::path::Path;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::sync::Mutex;
-use tokio::sync::Notify;
 
 #[napi]
 pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> u32 {
@@ -42,10 +38,8 @@ pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> u32 {
   let rng = Box::new(rand::rngs::StdRng::from_entropy());
 
   let opened_path = conn.path().unwrap().to_owned();
-  // let notifier = SqliteNotifier::default(); // TODO waiting on watch pr
-  // let sqlite = Sqlite::new(conn, notifier, rng).unwrap();
-  let notify = Arc::new(Notify::new());
-  let sqlite = Sqlite::new(conn, notify, rng).unwrap();
+  let notifier = SqliteNotifier::default();
+  let sqlite = Sqlite::new(conn, notifier, rng).unwrap();
 
   let db_id = DB_ID.fetch_add(1, Ordering::Relaxed);
   DBS.lock().unwrap().insert(db_id, sqlite);
@@ -246,21 +240,19 @@ pub async fn start_watch(
   watch_bytes: Buffer,
   debug: bool,
 ) -> Result<u32> {
+  let watch_pb = pb::Watch::decode(&mut Cursor::new(watch_bytes))
+    .map_err(convert_prost_decode_error_to_anyhow)?;
+
   if debug {
     println!(
-      "[napi] start_watch: db_id={:#?} watch_bytes={:#?}",
-      db_id,
-      watch_bytes.to_vec()
+      "[napi] start_watch: db_id={:#?} watch_pb={:#?}",
+      db_id, watch_pb
     )
   }
 
-  // TODO waiting on watch pr
-  // let watch_pb: pb::Watch = pb::Watch::decode(&mut Cursor::new(watch_bytes)).unwrap();
-  // if debug { println!("[napi] start_watch: db_id={:#?} watch_pb={:#?}", db_id, watch_pb) }
-
-  // let keys = watch_pb.keys.iter().map(|v| { v.key.clone() }).collect();
-  // let db: Sqlite = DBS.lock().unwrap().get(&db_id).unwrap().to_owned();
-  // let _stream = db.watch(keys);
+  let keys = watch_pb.keys.iter().map(|v| v.key.clone()).collect();
+  let db: Sqlite = DBS.lock().unwrap().get(&db_id).unwrap().to_owned();
+  let _stream = db.watch(keys);
 
   // TODO store stream in WATCHES?
 
@@ -283,13 +275,14 @@ pub async fn dequeue_next_watch_message(
     )
   }
 
-  // TODO waiting on watch pr
+  // TODO obtain next messages from WATCHES?
   // let watch_output_pb = WatchOutput {
   //   status: SnapshotReadStatus::SrUnspecified.into(),
-  //   keys: [].to_vec()
+  //   keys: [<the output keys>].to_vec()
   // };
   // let bytes = to_buffer(watch_output_pb);
   // Ok(Either::A(bytes))
+
   Ok(Either::B(()))
 }
 
@@ -301,6 +294,9 @@ pub fn end_watch(db_id: u32, watch_id: u32, debug: bool) {
       db_id, watch_id
     )
   }
+
+  // TODO end watch
+
   WATCHES.lock().unwrap().remove(&watch_id);
 }
 
@@ -354,6 +350,7 @@ fn convert_error_to_str(err: denokv_proto::ConvertError) -> String {
     ConvertError::InvalidMutationEnqueueDeadline => {
       String::from("InvalidMutationEnqueueDeadline")
     }
+    ConvertError::TooManyWatchedKeys => String::from("TooManyWatchedKeys"),
   }
 }
 

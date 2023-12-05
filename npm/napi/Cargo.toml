@@ -12,8 +12,8 @@ crate-type = ["cdylib"]
 [dependencies]
 napi = {version="2", features=["async","anyhow"]}
 napi-derive = "2"
-denokv_sqlite = "0.4.0"
-denokv_proto = "0.4.0"
+denokv_sqlite = { path = "../../sqlite" }
+denokv_proto = { path = "../../proto" }
 rand = "0.8.5"
 rand_distr = "0.3.0"
 tokio = { version = "1.33.0", features = ["full"] }

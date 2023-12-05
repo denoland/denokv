@@ -10,7 +10,7 @@ env:
     tags:
       - '**'
     paths:
-      - '.github/workflows/*.yml'
+      - '.github/workflows/npm.yml'
       - '.github/*.sh'
       - 'npm/src/**'
       - 'npm/napi/**'

@@ -1,0 +1,41 @@
+{
+  "name": "@deno/kv-linux-x64-gnu",
+  "version": "0.0.0-local",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "deno-kv-napi.linux-x64-gnu.node",
+  "files": [
+    "deno-kv-napi.linux-x64-gnu.node"
+  ],
+  "description": "A Deno KV client library optimized for Node.js",
+  "keywords": [
+    "deno",
+    "kv",
+    "napi-rs",
+    "NAPI",
+    "N-API",
+    "Rust",
+    "node-addon",
+    "node-addon-api"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 18"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/denoland/denokv.git",
+    "directory": "npm/napi"
+  },
+  "libc": [
+    "glibc"
+  ]
+}

@@ -17,7 +17,7 @@ export * from "./napi_based.ts";
 export * from "./remote.ts";
 export * from "./in_memory.ts";
 export * from "./kv_types.ts";
-export { UnknownV8 } from "./v8.ts";
+export { makeLimitedV8Serializer, UnknownV8 } from "./v8.ts";
 
 export type KvImplementation = "in-memory" | "sqlite" | "remote";
 
@@ -82,7 +82,7 @@ export async function openKv(
     }
     if ("Bun" in globalThis) {
       throw new Error(
-        `Bun provides v8.serialize/deserialize, but it uses an incompatible format (JavaScriptCore). Provide explicit 'encodeV8' and 'decodeV8' functions via options.`,
+        `Bun provides v8.serialize/deserialize, but it uses an incompatible format (JavaScriptCore). Provide explicit 'encodeV8' and 'decodeV8' functions via options. See https://www.npmjs.com/package/@deno/kv#other-runtimes`,
       ); // https://discord.com/channels/876711213126520882/888937948345684008/1150135641137487892
     }
     const v8 = await import(`${"v8"}`);

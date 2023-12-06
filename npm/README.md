@@ -7,14 +7,11 @@ A [Deno KV](https://deno.com/kv) client library optimized for Node.js.
 - Access [Deno Deploy](https://deno.com/deploy) remote databases (or any
   endpoint implementing the open
   [KV Connect](https://github.com/denoland/denokv/blob/main/proto/kv-connect.md)
-  protocol) on Node, Bun, or any JavaScript environment. 
-  - Most use cases will be server-side, but the remote client works directly in
-    the browser if you provide a custom `fetcher` to a server proxy
-    (Deno Deploy's endpoints don't currently allow CORS).
+  protocol) on Node 18+.
 - Create local KV databases backed by
   [SQLite](https://www.sqlite.org/index.html), using optimized native
   [NAPI](https://nodejs.org/docs/latest-v18.x/api/n-api.html) packages for
-  Node - compatible with DBs created by Deno itself.
+  Node - compatible with databases created by Deno itself.
 - Create ephemeral in-memory KV instances backed by SQLite memory files or by a
   lightweight JS-only implementation for testing.
 - Zero JS dependencies, architecture-specific native code for SQLite backend
@@ -25,12 +22,12 @@ A [Deno KV](https://deno.com/kv) client library optimized for Node.js.
 
 ### Quick start - Node 18+
 
-_Install the [NPM package](https://www.npmjs.com/package/@deno/kv)_ 👉
+_Install the [npm package](https://www.npmjs.com/package/@deno/kv)_ 👉
 `npm install @deno/kv`
 
 _Remote KV Database_
 
-```ts
+```js
 import { openKv } from "@deno/kv";
 
 // to open a database connection to an existing Deno Deploy KV database,
@@ -59,7 +56,7 @@ const kv2 = await openKv(
 
 _Local KV Database_
 
-```ts
+```js
 import { openKv } from "@deno/kv";
 
 // create a local KV database instance backed by SQLite
@@ -75,7 +72,7 @@ kv.close();
 
 _In-Memory KV Database (no native code)_
 
-```ts
+```js
 import { openKv } from "@deno/kv";
 
 // create an ephemeral KV instance for testing
@@ -95,7 +92,7 @@ kv.close();
 ### Local KV Databases
 
 Local disk-based databases are backed by
-[SQLite](https://www.sqlite.org/index.html), and are compatible with DBs created
+[SQLite](https://www.sqlite.org/index.html), and are compatible with databases created
 with Deno itself:
 
 - leverages shared Rust code from
@@ -103,7 +100,7 @@ with Deno itself:
   compiled for Node's native interface via the [NAPI-RS](https://napi.rs/)
   framework
 - an architecture-specific native package dependency is selected and installed
-  at `npm install` time via the standard NPM
+  at `npm install` time via the standard npm
   [peer dependency mechanism](https://docs.npmjs.com/cli/v10/configuring-npm/package-json#peerdependencies)
 
 The following native architectures are supported:
@@ -118,7 +115,7 @@ The following native architectures are supported:
 ### Credits
 
 - Protobuf code generated with [pb](https://deno.land/x/pbkit/cli/pb/README.md)
-- NPM package generated with [dnt](https://github.com/denoland/dnt)
+- npm package generated with [dnt](https://github.com/denoland/dnt)
 - Initial code contributed by
   [skymethod/kv-connect-kit](https://github.com/skymethod/kv-connect-kit)
 
@@ -141,7 +138,7 @@ three different implementations are used:
 
 You can override the implementation used via the `implementation` option:
 
-```ts
+```js
 const kv = await openKv("https://example.com/not-really-remote", {
   implementation: "in-memory",
 });
@@ -149,8 +146,10 @@ const kv = await openKv("https://example.com/not-really-remote", {
 
 Pass the `debug` option to `console.log` additional debugging info:
 
-```ts
-const kv = await openKv("http://localhost:4512/", { debug: true });
+```js
+const kv = await openKv("http://localhost:4512/", { 
+  debug: true
+});
 ```
 
 ### Backend-specific options
@@ -158,7 +157,7 @@ const kv = await openKv("http://localhost:4512/", { debug: true });
 Each implementation supports different additional options,
 via the second parameter to `openKv`:
 
-_Remote backend_
+**Remote backend**
 
 ```ts
 export interface RemoteServiceOptions {
@@ -197,7 +196,7 @@ export interface RemoteServiceOptions {
 }
 ```
 
-_Native SQLite backend_
+**Native SQLite backend**
 
 ```ts
 export interface NapiBasedServiceOptions {
@@ -222,7 +221,7 @@ export interface NapiBasedServiceOptions {
 }
 ```
 
-_Lightweight In-Memory backend_
+**Lightweight In-Memory backend**
 
 ```ts
 export interface InMemoryServiceOptions {
@@ -232,4 +231,67 @@ export interface InMemoryServiceOptions {
   /** Maximum number of attempts to deliver a failing queue message before giving up. Defaults to 10. */
   readonly maxQueueAttempts?: number;
 }
+```
+
+### Other runtimes
+
+This package is targeted for Node.js, but may work on other runtimes with the following caveats:
+
+**V8 Serialization**
+
+Deno KV uses V8 serialization to serialize values, provided natively by Deno and when using this
+package on Node automatically via the [built-in `v8` module](https://nodejs.org/api/v8.html#serialization-api).
+
+[Bun](https://bun.sh/) also provides a `v8` module, but uses a different serialization format under the hood (JavaScriptCore).
+
+This can present data corruption problems if you want to use databases on Deno Deploy or other databases shared
+with Node/Deno that use actual V8 serialization: you might create data you cannot read, or vice versa.
+
+For this reason, `openKV` on Bun will throw by default to avoid unexpected data corruption.
+
+If you are only going to read and write to your local databases in Bun, you can force the use of Bun's serializers by providing
+a custom `encodeV8`, `decodeV8` explicitly as the second parameter to `openKv`. Note any data will be unreadable by
+Node (using @deno/kv), or Deno - since they use the actual V8 format.
+
+```js
+import { openKv } from "@deno/kv";
+import { serialize as encodeV8, deserialize as decodeV8 } from "v8"; // actually JavaScriptCore format on Bun!
+
+const kv = await openKv("kv.db", { encodeV8, decodeV8 });
+```
+
+If a native `v8` module is not available, you can use a limited JS-only V8 serializer provided by this package.
+It only supports a limited number of types (strings, null, undefined, boolean), consider using `JSON.parse`/`JSON.stringify`
+to marshall values to and from strings in this case.
+
+```js
+import { openKv, makeLimitedV8Serializer } from "@deno/kv";
+
+const { encodeV8, decodeV8 } = makeLimitedV8Serializer();
+
+const kv = await openKv("kv.db", { encodeV8, decodeV8 });
+```
+
+V8 serialization is only necessary for SQLite and remote databases, the in-memory implementation
+(used when calling `openKv()` or `openKv('')`) uses in-process values and [structuredClone](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone)
+instead.
+
+**CORS**
+
+Connecting to a remote KV database with this package should work directly in the browser,
+but you'll need to provide a V8 serializer (see above) and also a custom `fetcher` if the KV connect endpoints
+do not allow CORS requests (Deno Deploy currently doesn't).
+
+You can provide a `fetcher` function that proxies http requests to your backend in this case.
+
+```js
+import { openKv, makeLimitedV8Serializer } from "@deno/kv";
+
+const { encodeV8, decodeV8 } = makeLimitedV8Serializer();
+const fetcher = async (input, init) => /* produce a Response */;
+
+const kv = await openKv(
+  "https://api.deno.com/databases/YOUR_DATABASE_ID/connect",
+  { accessToken: mySecretAccessToken, fetcher },
+);
 ```

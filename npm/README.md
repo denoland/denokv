@@ -239,7 +239,7 @@ This package is targeted for Node.js, but may work on other runtimes with the fo
 
 **V8 Serialization**
 
-Deno KV uses V8 serialization to serialize values, provided natively by Deno and when using this
+Deno KV uses [V8](https://v8.dev/docs)'s serialization format to serialize values, provided natively by Deno and when using this
 package on Node automatically via the [built-in `v8` module](https://nodejs.org/api/v8.html#serialization-api).
 
 [Bun](https://bun.sh/) also provides a `v8` module, but uses a different serialization format under the hood (JavaScriptCore).
@@ -260,9 +260,9 @@ import { serialize as encodeV8, deserialize as decodeV8 } from "v8"; // actually
 const kv = await openKv("kv.db", { encodeV8, decodeV8 });
 ```
 
-If a native `v8` module is not available, you can use a limited JS-only V8 serializer provided by this package.
-It only supports a limited number of types (strings, null, undefined, boolean), consider using `JSON.parse`/`JSON.stringify`
-to marshall values to and from strings in this case.
+If a native `v8` module is not available on your runtime, you can use a limited JS-based V8 serializer provided by this package.
+It only supports a limited number of value types (`string`, `boolean`, `null`, `undefined`), so consider using `JSON.parse`/`JSON.stringify`
+to marshall values to and from strings for storage.
 
 ```js
 import { openKv, makeLimitedV8Serializer } from "@deno/kv";
@@ -273,25 +273,5 @@ const kv = await openKv("kv.db", { encodeV8, decodeV8 });
 ```
 
 V8 serialization is only necessary for SQLite and remote databases, the in-memory implementation
-(used when calling `openKv()` or `openKv('')`) uses in-process values and [structuredClone](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone)
+used when calling `openKv()` or `openKv('')` uses in-process values and [structuredClone](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone)
 instead.
-
-**CORS**
-
-Connecting to a remote KV database with this package should work directly in the browser,
-but you'll need to provide a V8 serializer (see above) and also a custom `fetcher` if the KV connect endpoints
-do not allow CORS requests (Deno Deploy currently doesn't).
-
-You can provide a `fetcher` function that proxies http requests to your backend in this case.
-
-```js
-import { openKv, makeLimitedV8Serializer } from "@deno/kv";
-
-const { encodeV8, decodeV8 } = makeLimitedV8Serializer();
-const fetcher = async (input, init) => /* produce a Response */;
-
-const kv = await openKv(
-  "https://api.deno.com/databases/YOUR_DATABASE_ID/connect",
-  { accessToken: mySecretAccessToken, fetcher },
-);
-```

@@ -71,11 +71,12 @@ await build({
     repository: {
       type: "git",
       url: "https://github.com/denoland/denokv.git",
+      directory: "npm"
     },
     bugs: {
       url: "https://github.com/denoland/denokv/issues",
     },
-    homepage: "https://github.com/denoland/denokv",
+    homepage: "https://github.com/denoland/denokv/tree/main/npm",
     optionalDependencies: Object.fromEntries(
       ["win32-x64-msvc", "darwin-x64", "linux-x64-gnu", "darwin-arm64"].map(
         (v) => [`${napi.packageName}-${v}`, napi.packageVersion],

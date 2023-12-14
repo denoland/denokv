@@ -614,6 +614,9 @@ impl From<SqliteBackendError> for ApiError {
         ApiError::UnknownValueEncoding(encoding)
       }
       SqliteBackendError::TypeMismatch(msg) => ApiError::TypeMismatch(msg),
+      x @ SqliteBackendError::SumOutOfRange => {
+        ApiError::TypeMismatch(x.to_string())
+      }
     }
   }
 }

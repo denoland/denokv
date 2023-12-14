@@ -47,3 +47,4 @@ tokio = { version = "1.33.0", features = ["full"] }
 tokio-util = "0.7"
 url = "2"
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
+v8_valueserializer = { git = "https://github.com/denoland/v8_valueserializer", rev = "57891ee121a069a5b612a45e107809434473cf81" }

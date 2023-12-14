@@ -2575,14 +2575,14 @@ dependencies = [
 
 [[package]]
 name = "v8_valueserializer"
-version = "0.1.0"
-source = "git+https://github.com/denoland/v8_valueserializer?rev=57891ee121a069a5b612a45e107809434473cf81#57891ee121a069a5b612a45e107809434473cf81"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97599c400fc79925922b58303e98fcb8fa88f573379a08ddb652e72cbd2e70f6"
 dependencies = [
  "bitflags 2.4.1",
  "encoding_rs",
  "indexmap 2.1.0",
  "num-bigint",
- "rand",
  "serde",
  "thiserror",
  "wtf8",

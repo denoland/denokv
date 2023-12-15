@@ -897,6 +897,11 @@ fn sum_v8(
       Ok(SumOperand::Number(current))
     }
     (SumOperand::KvU64(current), SumOperand::KvU64(operand)) => {
+      if result_min.is_some() || result_max.is_some() {
+        return Err(SqliteBackendError::TypeMismatch(
+          "Cannot use min/max parameters with KvU64 operands".into(),
+        ));
+      }
       Ok(SumOperand::KvU64(current.wrapping_add(*operand)))
     }
     _ => Err(SqliteBackendError::TypeMismatch(format!(

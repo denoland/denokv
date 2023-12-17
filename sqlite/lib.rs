@@ -449,8 +449,11 @@ impl Sqlite {
     let slot = if let Some(x) = self
       .workers
       .iter()
+      .skip(1)
       .find_map(|x| x.request_tx.try_reserve().ok())
     {
+      x
+    } else if let Some(x) = self.workers[0].request_tx.try_reserve().ok() {
       x
     } else {
       futures::future::select_all(

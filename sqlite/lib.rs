@@ -453,7 +453,7 @@ impl Sqlite {
       .find_map(|x| x.request_tx.try_reserve().ok())
     {
       x
-    } else if let Some(x) = self.workers[0].request_tx.try_reserve().ok() {
+    } else if let Ok(x) = self.workers[0].request_tx.try_reserve() {
       x
     } else {
       futures::future::select_all(

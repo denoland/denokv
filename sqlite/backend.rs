@@ -282,7 +282,7 @@ impl SqliteBackend {
       let mut has_enqueues = false;
       let mut commit_results = Vec::with_capacity(writes.len());
       for write in &writes {
-        match Self::atomic_write_once(tx, rng, &write) {
+        match Self::atomic_write_once(tx, rng, write) {
           Ok((this_has_enqueue, commit_result)) => {
             has_enqueues |= this_has_enqueue;
             commit_results.push(Ok(commit_result));

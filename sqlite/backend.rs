@@ -173,8 +173,9 @@ impl SqliteBackend {
     conn: rusqlite::Connection,
     notifier: SqliteNotifier,
     rng: Box<dyn RngCore + Send>,
+    force_readonly: bool,
   ) -> Result<Self, anyhow::Error> {
-    let readonly = conn.is_readonly(DatabaseName::Main)?;
+    let readonly = force_readonly || conn.is_readonly(DatabaseName::Main)?;
     let mut this = Self {
       conn,
       rng,
@@ -187,7 +188,10 @@ impl SqliteBackend {
       return Ok(this);
     }
 
-    this.conn.pragma_update(None, "journal_mode", "wal")?;
+    if let Err(e) = this.conn.pragma_update(None, "journal_mode", "wal") {
+      log::error!("Failed to set journal_mode to WAL: {}", e);
+    }
+
     this.run_tx(|tx, _| {
       tx.execute(STATEMENT_CREATE_MIGRATION_TABLE, [])?;
 
@@ -263,145 +267,188 @@ impl SqliteBackend {
     })
   }
 
-  pub fn atomic_write(
+  pub fn atomic_write_batched(
     &mut self,
-    write: AtomicWrite,
-  ) -> Result<Option<CommitResult>, SqliteBackendError> {
+    writes: Vec<AtomicWrite>,
+  ) -> Vec<Result<Option<CommitResult>, SqliteBackendError>> {
     if self.readonly {
-      return Err(SqliteBackendError::WriteDisabled);
+      return writes
+        .iter()
+        .map(|_| Err(SqliteBackendError::WriteDisabled))
+        .collect();
     }
 
-    let (has_enqueues, commit_result) = self.run_tx(|tx, rng| {
-      for check in &write.checks {
-        let real_versionstamp = tx
-          .prepare_cached(STATEMENT_KV_POINT_GET_VERSION_ONLY)?
-          .query_row([check.key.as_slice()], |row| row.get(0))
-          .optional()?
-          .map(version_to_versionstamp);
-        if real_versionstamp != check.versionstamp {
-          return Ok((false, None));
-        }
-      }
-
-      let incrementer_count = rng.gen_range(1..10);
-      let version: i64 = tx
-        .prepare_cached(STATEMENT_INC_AND_GET_DATA_VERSION)?
-        .query_row([incrementer_count], |row| row.get(0))?;
-      let new_versionstamp = version_to_versionstamp(version);
-
-      for mutation in &write.mutations {
-        match &mutation.kind {
-          MutationKind::Set(value) => {
-            let (value, encoding) = encode_value(value);
-            let changed =
-              tx.prepare_cached(STATEMENT_KV_POINT_SET)?.execute(params![
-                mutation.key,
-                value,
-                &encoding,
-                &version,
-                mutation
-                  .expire_at
-                  .map(|time| time.timestamp_millis())
-                  .unwrap_or(-1i64)
-              ])?;
-            assert_eq!(changed, 1)
+    let res = self.run_tx(|tx, rng| {
+      let mut has_enqueues = false;
+      let mut commit_results = Vec::with_capacity(writes.len());
+      for write in &writes {
+        match Self::atomic_write_once(tx, rng, &write) {
+          Ok((this_has_enqueue, commit_result)) => {
+            has_enqueues |= this_has_enqueue;
+            commit_results.push(Ok(commit_result));
           }
-          MutationKind::Delete => {
-            let changed = tx
-              .prepare_cached(STATEMENT_KV_POINT_DELETE)?
-              .execute(params![mutation.key])?;
-            assert!(changed == 0 || changed == 1)
-          }
-          MutationKind::Sum(operand) => {
-            mutate_le64(tx, &mutation.key, "sum", operand, version, |a, b| {
-              a.wrapping_add(b)
-            })?;
-          }
-          MutationKind::Min(operand) => {
-            mutate_le64(tx, &mutation.key, "min", operand, version, |a, b| {
-              a.min(b)
-            })?;
-          }
-          MutationKind::Max(operand) => {
-            mutate_le64(tx, &mutation.key, "max", operand, version, |a, b| {
-              a.max(b)
-            })?;
-          }
-          MutationKind::SetSuffixVersionstampedKey(value) => {
-            let mut versionstamp_suffix = [0u8; 22];
-            versionstamp_suffix[0] = 0x02;
-            hex::encode_to_slice(
-              new_versionstamp,
-              &mut versionstamp_suffix[1..21],
-            )
-            .unwrap();
-
-            let key = [&mutation.key[..], &versionstamp_suffix[..]].concat();
-
-            let (value, encoding) = encode_value(value);
-            let changed =
-              tx.prepare_cached(STATEMENT_KV_POINT_SET)?.execute(params![
-                key,
-                value,
-                &encoding,
-                &version,
-                mutation
-                  .expire_at
-                  .map(|time| time.timestamp_millis())
-                  .unwrap_or(-1i64)
-              ])?;
-            assert_eq!(changed, 1)
+          Err(e) => {
+            commit_results.push(Err(e));
           }
         }
       }
+      Ok((has_enqueues, commit_results))
+    });
 
-      let has_enqueues = !write.enqueues.is_empty();
-      for enqueue in &write.enqueues {
-        let id = Uuid::new_v4().to_string();
-        let backoff_schedule = serde_json::to_string(
-          &enqueue
-            .backoff_schedule
-            .as_deref()
-            .or_else(|| Some(&DEFAULT_BACKOFF_SCHEDULE[..])),
-        )
-        .map_err(anyhow::Error::from)?;
-        let keys_if_undelivered =
-          serde_json::to_string(&enqueue.keys_if_undelivered)
-            .map_err(anyhow::Error::from)?;
-
-        let changed =
-          tx.prepare_cached(STATEMENT_QUEUE_ADD_READY)?
-            .execute(params![
-              enqueue.deadline.timestamp_millis() as u64,
-              id,
-              &enqueue.payload,
-              &backoff_schedule,
-              &keys_if_undelivered
-            ])?;
-        assert_eq!(changed, 1)
+    let (has_enqueues, commit_results) = match res {
+      Ok(x) => x,
+      Err(e) => {
+        let mut e = Some(e);
+        return writes
+          .iter()
+          .map(|_| {
+            Err(e.take().unwrap_or_else(|| {
+              SqliteBackendError::GenericError(anyhow::anyhow!(
+                "batch transaction failed"
+              ))
+            }))
+          })
+          .collect();
       }
-
-      Ok((
-        has_enqueues,
-        Some(CommitResult {
-          versionstamp: new_versionstamp,
-        }),
-      ))
-    })?;
+    };
 
     if has_enqueues {
       self.notifier.schedule_dequeue();
     }
 
-    if let Some(commit_result) = &commit_result {
-      for mutation in &write.mutations {
-        self
-          .notifier
-          .notify_key_update(&mutation.key, commit_result.versionstamp);
+    for (write, commit_result) in writes.iter().zip(commit_results.iter()) {
+      if let Ok(Some(commit_result)) = &commit_result {
+        for mutation in &write.mutations {
+          self
+            .notifier
+            .notify_key_update(&mutation.key, commit_result.versionstamp);
+        }
       }
     }
 
-    Ok(commit_result)
+    commit_results
+  }
+
+  fn atomic_write_once(
+    tx: &mut rusqlite::Transaction,
+    rng: &mut dyn RngCore,
+    write: &AtomicWrite,
+  ) -> Result<(bool, Option<CommitResult>), SqliteBackendError> {
+    for check in &write.checks {
+      let real_versionstamp = tx
+        .prepare_cached(STATEMENT_KV_POINT_GET_VERSION_ONLY)?
+        .query_row([check.key.as_slice()], |row| row.get(0))
+        .optional()?
+        .map(version_to_versionstamp);
+      if real_versionstamp != check.versionstamp {
+        return Ok((false, None));
+      }
+    }
+
+    let incrementer_count = rng.gen_range(1..10);
+    let version: i64 = tx
+      .prepare_cached(STATEMENT_INC_AND_GET_DATA_VERSION)?
+      .query_row([incrementer_count], |row| row.get(0))?;
+    let new_versionstamp = version_to_versionstamp(version);
+
+    for mutation in &write.mutations {
+      match &mutation.kind {
+        MutationKind::Set(value) => {
+          let (value, encoding) = encode_value(value);
+          let changed =
+            tx.prepare_cached(STATEMENT_KV_POINT_SET)?.execute(params![
+              mutation.key,
+              value,
+              &encoding,
+              &version,
+              mutation
+                .expire_at
+                .map(|time| time.timestamp_millis())
+                .unwrap_or(-1i64)
+            ])?;
+          assert_eq!(changed, 1)
+        }
+        MutationKind::Delete => {
+          let changed = tx
+            .prepare_cached(STATEMENT_KV_POINT_DELETE)?
+            .execute(params![mutation.key])?;
+          assert!(changed == 0 || changed == 1)
+        }
+        MutationKind::Sum(operand) => {
+          mutate_le64(tx, &mutation.key, "sum", operand, version, |a, b| {
+            a.wrapping_add(b)
+          })?;
+        }
+        MutationKind::Min(operand) => {
+          mutate_le64(tx, &mutation.key, "min", operand, version, |a, b| {
+            a.min(b)
+          })?;
+        }
+        MutationKind::Max(operand) => {
+          mutate_le64(tx, &mutation.key, "max", operand, version, |a, b| {
+            a.max(b)
+          })?;
+        }
+        MutationKind::SetSuffixVersionstampedKey(value) => {
+          let mut versionstamp_suffix = [0u8; 22];
+          versionstamp_suffix[0] = 0x02;
+          hex::encode_to_slice(
+            new_versionstamp,
+            &mut versionstamp_suffix[1..21],
+          )
+          .unwrap();
+
+          let key = [&mutation.key[..], &versionstamp_suffix[..]].concat();
+
+          let (value, encoding) = encode_value(value);
+          let changed =
+            tx.prepare_cached(STATEMENT_KV_POINT_SET)?.execute(params![
+              key,
+              value,
+              &encoding,
+              &version,
+              mutation
+                .expire_at
+                .map(|time| time.timestamp_millis())
+                .unwrap_or(-1i64)
+            ])?;
+          assert_eq!(changed, 1)
+        }
+      }
+    }
+
+    let has_enqueues = !write.enqueues.is_empty();
+    for enqueue in &write.enqueues {
+      let id = Uuid::new_v4().to_string();
+      let backoff_schedule = serde_json::to_string(
+        &enqueue
+          .backoff_schedule
+          .as_deref()
+          .or_else(|| Some(&DEFAULT_BACKOFF_SCHEDULE[..])),
+      )
+      .map_err(anyhow::Error::from)?;
+      let keys_if_undelivered =
+        serde_json::to_string(&enqueue.keys_if_undelivered)
+          .map_err(anyhow::Error::from)?;
+
+      let changed =
+        tx.prepare_cached(STATEMENT_QUEUE_ADD_READY)?
+          .execute(params![
+            enqueue.deadline.timestamp_millis() as u64,
+            id,
+            &enqueue.payload,
+            &backoff_schedule,
+            &keys_if_undelivered
+          ])?;
+      assert_eq!(changed, 1)
+    }
+
+    Ok((
+      has_enqueues,
+      Some(CommitResult {
+        versionstamp: new_versionstamp,
+      }),
+    ))
   }
 
   pub fn queue_running_keepalive(&mut self) -> Result<(), SqliteBackendError> {

@@ -216,7 +216,7 @@ async fn run_serve(
   let sqlite_config = SqliteConfig {
     batch_timeout: options
       .atomic_write_batch_timeout_ms
-      .map(|x| std::time::Duration::from_millis(x)),
+      .map(std::time::Duration::from_millis),
     num_workers: options.num_workers,
   };
   let sqlite = open_sqlite(path, read_only, sqlite_config.clone())?;

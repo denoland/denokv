@@ -93,8 +93,12 @@ const writeSemaphore = new Semaphore(writeConcurrency);
 for (let i = 0; i < writeConcurrency; i++) {
   (async () => {
     while (true) {
-      const a = Math.floor(Math.random() * size);
-      const b = Math.floor(Math.random() * size);
+      const a = Math.floor(
+        Math.random() * Math.random() * Math.random() * size,
+      );
+      const b = Math.floor(
+        Math.random() * Math.random() * Math.random() * size,
+      );
       if (a === b) continue;
 
       const release = await writeSemaphore.acquire();
@@ -193,7 +197,11 @@ for (let i = 0;; i++) {
     if (balanceSum !== 0n) {
       throw new Error(`Consistency check failed: ${balanceSum}`);
     }
-    console.log(`Consistency check passed in ${Date.now() - startTime}ms, absSum=${absSum}`);
+    console.log(
+      `Consistency check passed in ${
+        Date.now() - startTime
+      }ms, absSum=${absSum}`,
+    );
     callbacks.forEach((x) => x());
   }
 }

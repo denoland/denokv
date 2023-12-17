@@ -225,19 +225,22 @@ impl Sqlite {
         SqliteBackend::new(conn, notifier.clone(), versionstamp_rng, i != 0)?;
       let init_fence = init_fence.clone();
       let shutdown_notify = shutdown_notify.clone();
-      let join_handle: JoinHandle<()> = std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-          .enable_all()
-          .build()
-          .unwrap()
-          .block_on(async move {
-            // We need to fence
-            let shutdown_notify = shutdown_notify.notified();
-            init_fence.wait();
-            sqlite_thread(backend, shutdown_notify, request_rx, batch_timeout)
-              .await
-          });
-      });
+      let join_handle: JoinHandle<()> = std::thread::Builder::new()
+        .name(format!("sw-{}", i))
+        .spawn(move || {
+          tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+              // We need to fence
+              let shutdown_notify = shutdown_notify.notified();
+              init_fence.wait();
+              sqlite_thread(backend, shutdown_notify, request_rx, batch_timeout)
+                .await
+            });
+        })
+        .unwrap();
       workers.push(SqliteWorker {
         request_tx,
         join_handle: Arc::new(Mutex::new(Some(join_handle))),

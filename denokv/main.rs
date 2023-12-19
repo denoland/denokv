@@ -282,7 +282,7 @@ async fn run_sync(
       let proxy_uri = https_proxy.parse().unwrap();
       let proxy = Proxy::new(Intercept::All, proxy_uri);
       let connector = HttpConnector::new();
-      ProxyConnector::from_proxy(connector, proxy).unwrap()
+      ProxyConnector::from_proxy_unsecured(connector, proxy)
     };
     let hyper_client =
       aws_smithy_client::hyper_ext::Adapter::builder().build(proxy);

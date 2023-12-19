@@ -1,8 +1,0 @@
-{
-  "version": "3",
-  "remote": {
-    "https://deno.land/std@0.191.0/_util/asserts.ts": "178dfc49a464aee693a7e285567b3d0b555dc805ff490505a8aae34f9cfb1462",
-    "https://deno.land/std@0.191.0/flags/mod.ts": "17f444ddbee43c5487568de0c6a076c7729cfe90d96d2ffcd2b8f8adadafb6e8",
-    "https://deno.land/x/semaphore@v1.1.2/semaphore.ts": "a3da40292cd49c3f31be392aa16831d00c1ddf6daca50dd74eb61aa6ae8f52a3"
-  }
-}

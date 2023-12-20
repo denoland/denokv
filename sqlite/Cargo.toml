@@ -10,10 +10,6 @@ authors.workspace = true
 [lib]
 path = "lib.rs"
 
-[features]
-default = ["bundled"]
-bundled = ["rusqlite/bundled"]
-
 [dependencies]
 anyhow.workspace = true
 async-stream.workspace= true
@@ -29,4 +25,5 @@ rusqlite.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 uuid.workspace = true

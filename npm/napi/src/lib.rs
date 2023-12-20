@@ -10,6 +10,7 @@ use denokv_proto::WatchKeyOutput;
 use denokv_sqlite::Connection;
 use denokv_sqlite::Sqlite;
 use denokv_sqlite::SqliteBackendError;
+use denokv_sqlite::SqliteConfig;
 use denokv_sqlite::SqliteMessageHandle;
 use denokv_sqlite::SqliteNotifier;
 use futures::stream::BoxStream;
@@ -38,14 +39,11 @@ pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> Result<u32> {
   } else {
     OpenFlags::default()
   };
-  let conn = Connection::open_with_flags(Path::new(&path), flags)
-    .map_err(anyhow::Error::from)?;
-  conn
-    .pragma_update(None, "journal_mode", "wal")
-    .map_err(anyhow::Error::from)?;
-  let rng = Box::new(rand::rngs::StdRng::from_entropy());
 
-  let opened_path = conn.path().map(|p| p.to_string());
+  let opened_path = Connection::open_with_flags(Path::new(&path), flags)
+    .map_err(anyhow::Error::from)?
+    .path()
+    .map(|p| p.to_string());
   let notifier = match &opened_path {
     Some(opened_path) if !opened_path.is_empty() => NOTIFIERS_MAP
       .lock()
@@ -56,7 +54,20 @@ pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> Result<u32> {
     _ => SqliteNotifier::default(),
   };
 
-  let sqlite = Sqlite::new(conn, notifier, rng)?;
+  let sqlite = Sqlite::new(
+    || {
+      Ok((
+        Connection::open_with_flags(Path::new(&path), flags)
+          .map_err(anyhow::Error::from)?,
+        Box::new(rand::rngs::StdRng::from_entropy()),
+      ))
+    },
+    notifier,
+    SqliteConfig {
+      num_workers: 1,
+      batch_timeout: None,
+    },
+  )?;
 
   let db_id = DB_ID.fetch_add(1, Ordering::Relaxed);
   DBS.lock().unwrap().insert(db_id, sqlite);

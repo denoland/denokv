@@ -39,6 +39,14 @@ pub struct ServeOptions {
   #[clap(long, conflicts_with = "read_only")]
   pub sync_from_s3: bool,
 
+  /// Atomic write batch timeout. Batching is disabled if this is not set.
+  #[clap(long, env = "DENO_KV_ATOMIC_WRITE_BATCH_TIMEOUT_MS")]
+  pub atomic_write_batch_timeout_ms: Option<u64>,
+
+  /// Number of worker threads.
+  #[clap(long, env = "DENO_KV_NUM_WORKERS", default_value = "1")]
+  pub num_workers: usize,
+
   #[command(flatten)]
   pub replica: ReplicaOptions,
 }

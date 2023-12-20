@@ -185,7 +185,8 @@ impl Drop for SqliteKeySubscription {
 pub struct Sqlite {
   shutdown_notify: Arc<Notify>,
   notifier: SqliteNotifier,
-  workers: Vec<SqliteWorker>,
+  write_worker: SqliteWorker,
+  read_workers: Vec<SqliteWorker>,
 }
 
 #[derive(Clone)]
@@ -212,7 +213,12 @@ impl Sqlite {
     let shutdown_notify = Arc::new(Notify::new());
     let batch_timeout = config.batch_timeout;
 
-    let mut workers = Vec::with_capacity(config.num_workers);
+    if config.num_workers == 0 {
+      anyhow::bail!("num_workers must be at least 1")
+    }
+
+    let mut write_worker: Option<SqliteWorker> = None;
+    let mut read_workers = Vec::with_capacity(config.num_workers - 1);
 
     // This fence is used to block the current thread until all workers have got the
     // `Notified` future, to ensure no race is possible during a shutdown `notify_waiters`.
@@ -241,18 +247,26 @@ impl Sqlite {
             });
         })
         .unwrap();
-      workers.push(SqliteWorker {
+      let worker = SqliteWorker {
         request_tx,
         join_handle: Arc::new(Mutex::new(Some(join_handle))),
-      });
+      };
+      if i == 0 {
+        write_worker = Some(worker);
+      } else {
+        read_workers.push(worker);
+      }
     }
+
+    assert_eq!(read_workers.len(), config.num_workers - 1);
 
     init_fence.wait();
 
     Ok(Self {
       shutdown_notify,
       notifier,
-      workers,
+      write_worker: write_worker.unwrap(),
+      read_workers,
     })
   }
 }
@@ -450,17 +464,20 @@ impl Sqlite {
     let (sender, receiver) = oneshot::channel();
 
     let slot = if let Some(x) = self
-      .workers
+      .read_workers
       .iter()
-      .skip(1)
       .find_map(|x| x.request_tx.try_reserve().ok())
     {
       x
-    } else if let Ok(x) = self.workers[0].request_tx.try_reserve() {
+    } else if let Ok(x) = self.write_worker.request_tx.try_reserve() {
       x
     } else {
       futures::future::select_all(
-        self.workers.iter().map(|x| x.request_tx.reserve().boxed()),
+        self
+          .read_workers
+          .iter()
+          .chain(std::iter::once(&self.write_worker))
+          .map(|x| x.request_tx.reserve().boxed()),
       )
       .await
       .0
@@ -482,7 +499,8 @@ impl Sqlite {
     write: AtomicWrite,
   ) -> Result<Option<CommitResult>, SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
-    self.workers[0]
+    self
+      .write_worker
       .request_tx
       .send(SqliteRequest::AtomicWrite { write, sender })
       .await
@@ -497,7 +515,7 @@ impl Sqlite {
   ) -> Result<Option<SqliteMessageHandle>, SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
     let req = SqliteRequest::QueueDequeueMessage { sender };
-    if self.workers[0].request_tx.send(req).await.is_err() {
+    if self.write_worker.request_tx.send(req).await.is_err() {
       return Ok(None);
     }
     let Ok(dequeued_message) = receiver.await else {
@@ -506,7 +524,7 @@ impl Sqlite {
     Ok(Some(SqliteMessageHandle {
       id: dequeued_message.id,
       payload: Some(dequeued_message.payload),
-      request_tx: self.workers[0].request_tx.clone(),
+      request_tx: self.write_worker.request_tx.clone(),
     }))
   }
 
@@ -538,7 +556,7 @@ impl Sqlite {
       loop {
         let (sender, receiver) = oneshot::channel();
         let res = this
-          .workers[0]
+          .write_worker
           .request_tx
           .send(SqliteRequest::SnapshotRead {
             requests: requests.clone(),
@@ -573,7 +591,8 @@ impl Sqlite {
 
   pub fn close(&self) {
     self.shutdown_notify.notify_waiters();
-    for w in &self.workers {
+    for w in std::iter::once(&self.write_worker).chain(self.read_workers.iter())
+    {
       w.join_handle
         .lock()
         .unwrap()

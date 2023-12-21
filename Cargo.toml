@@ -9,10 +9,10 @@ authors = ["the Deno authors"]
 edition = "2021"
 
 [workspace.dependencies]
-denokv_proto = { version = "0.6.1", path = "./proto" }
-denokv_sqlite = { version = "0.6.1", path = "./sqlite" }
-denokv_remote = { version = "0.6.1", path = "./remote" }
-denokv_timemachine = { version = "0.6.1", path = "./timemachine" }
+denokv_proto = { version = "0.7.0", path = "./proto" }
+denokv_sqlite = { version = "0.7.0", path = "./sqlite" }
+denokv_remote = { version = "0.7.0", path = "./remote" }
+denokv_timemachine = { version = "0.7.0", path = "./timemachine" }
 
 anyhow = "1"
 async-stream = "0.3"

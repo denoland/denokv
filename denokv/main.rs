@@ -47,6 +47,7 @@ use denokv_proto::SnapshotReadOptions;
 use denokv_sqlite::Connection;
 use denokv_sqlite::Sqlite;
 use denokv_sqlite::SqliteBackendError;
+use denokv_sqlite::SqliteConfig;
 use denokv_sqlite::SqliteNotifier;
 use denokv_timemachine::backup_source_s3::DatabaseBackupSourceS3;
 use denokv_timemachine::backup_source_s3::DatabaseBackupSourceS3Config;
@@ -212,11 +213,18 @@ async fn run_serve(
 
   let path = Path::new(&config.sqlite_path);
   let read_only = options.read_only || options.sync_from_s3;
-  let (sqlite, path) = open_sqlite(path, read_only)?;
+  let sqlite_config = SqliteConfig {
+    batch_timeout: options
+      .atomic_write_batch_timeout_ms
+      .map(std::time::Duration::from_millis),
+    num_workers: options.num_workers,
+  };
+  let sqlite = open_sqlite(path, read_only, sqlite_config.clone())?;
   info!(
-    "Opened{} database at {}",
+    "Opened{} database at {}. Batch timeout: {:?}",
     if read_only { " read only" } else { "" },
-    path,
+    path.to_string_lossy(),
+    sqlite_config.batch_timeout,
   );
 
   let access_token = options.access_token.as_str();
@@ -274,7 +282,7 @@ async fn run_sync(
       let proxy_uri = https_proxy.parse().unwrap();
       let proxy = Proxy::new(Intercept::All, proxy_uri);
       let connector = HttpConnector::new();
-      ProxyConnector::from_proxy(connector, proxy).unwrap()
+      ProxyConnector::from_proxy_unsecured(connector, proxy)
     };
     let hyper_client =
       aws_smithy_client::hyper_ext::Adapter::builder().build(proxy);
@@ -327,7 +335,8 @@ async fn run_sync(
 fn open_sqlite(
   path: &Path,
   read_only: bool,
-) -> Result<(Sqlite, String), anyhow::Error> {
+  config: SqliteConfig,
+) -> Result<Sqlite, anyhow::Error> {
   let flags = if read_only {
     OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX
   } else {
@@ -335,12 +344,18 @@ fn open_sqlite(
       | OpenFlags::SQLITE_OPEN_CREATE
       | OpenFlags::SQLITE_OPEN_NO_MUTEX
   };
-  let conn = Connection::open_with_flags(path, flags)?;
   let notifier = SqliteNotifier::default();
-  let rng: Box<_> = Box::new(rand::rngs::StdRng::from_entropy());
-  let path = conn.path().unwrap().to_owned();
-  let sqlite = Sqlite::new(conn, notifier, rng)?;
-  Ok((sqlite, path))
+  let sqlite = Sqlite::new(
+    || {
+      Ok((
+        Connection::open_with_flags(path, flags)?,
+        Box::new(rand::rngs::StdRng::from_entropy()),
+      ))
+    },
+    notifier,
+    config,
+  )?;
+  Ok(sqlite)
 }
 
 #[axum::debug_handler]

@@ -11,6 +11,7 @@ use std::num::NonZeroU32;
 use std::ops::Add;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Barrier;
 use std::sync::Mutex;
 use std::sync::RwLock;
 use std::sync::Weak;
@@ -35,14 +36,18 @@ use denokv_proto::SnapshotReadOptions;
 use denokv_proto::Versionstamp;
 use denokv_proto::WatchKeyOutput;
 use futures::future::Either;
+use futures::FutureExt;
 use futures::Stream;
+use futures::StreamExt;
 use rand::RngCore;
 pub use rusqlite::Connection;
 use time::utc_now;
 use tokio::select;
+use tokio::sync::futures::Notified;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio::sync::Notify;
+use tokio_stream::wrappers::ReceiverStream;
 
 /// The interval at which the queue_running table is cleaned up of stale
 /// entries where the deadline has passed.
@@ -179,43 +184,101 @@ impl Drop for SqliteKeySubscription {
 
 #[derive(Clone)]
 pub struct Sqlite {
-  join_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
   shutdown_notify: Arc<Notify>,
-  request_tx: tokio::sync::mpsc::Sender<SqliteRequest>,
   notifier: SqliteNotifier,
+  write_worker: SqliteWorker,
+  read_workers: Vec<SqliteWorker>,
+}
+
+#[derive(Clone)]
+struct SqliteWorker {
+  request_tx: tokio::sync::mpsc::Sender<SqliteRequest>,
+  join_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SqliteConfig {
+  pub num_workers: usize,
+  pub batch_timeout: Option<Duration>,
 }
 
 impl Sqlite {
   pub fn new(
-    conn: rusqlite::Connection,
+    mut conn_gen: impl FnMut() -> anyhow::Result<(
+      rusqlite::Connection,
+      Box<dyn RngCore + Send>,
+    )>,
     notifier: SqliteNotifier,
-    versionstamp_rng: Box<dyn RngCore + Send>,
+    config: SqliteConfig,
   ) -> Result<Sqlite, anyhow::Error> {
-    let backend = SqliteBackend::new(conn, notifier.clone(), versionstamp_rng)?;
     let shutdown_notify = Arc::new(Notify::new());
-    let (request_tx, request_rx) = tokio::sync::mpsc::channel(1);
-    let shutdown_notify_ = shutdown_notify.clone();
-    let join_handle: JoinHandle<()> = std::thread::spawn(move || {
-      tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(sqlite_thread(backend, shutdown_notify_, request_rx));
-    });
+    let batch_timeout = config.batch_timeout;
+
+    if config.num_workers == 0 {
+      anyhow::bail!("num_workers must be at least 1")
+    }
+
+    let mut write_worker: Option<SqliteWorker> = None;
+    let mut read_workers = Vec::with_capacity(config.num_workers - 1);
+
+    // This fence is used to block the current thread until all workers have got the
+    // `Notified` future, to ensure no race is possible during a shutdown `notify_waiters`.
+    let init_fence = Arc::new(Barrier::new(config.num_workers + 1));
+
+    for i in 0..config.num_workers {
+      let (request_tx, request_rx) = tokio::sync::mpsc::channel(1);
+      let (conn, versionstamp_rng) = conn_gen()?;
+      let backend =
+        SqliteBackend::new(conn, notifier.clone(), versionstamp_rng, i != 0)?;
+      let init_fence = init_fence.clone();
+      let shutdown_notify = shutdown_notify.clone();
+      let join_handle: JoinHandle<()> = std::thread::Builder::new()
+        .name(format!("sw-{}", i))
+        .spawn(move || {
+          tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async move {
+              // We need to fence
+              let shutdown_notify = shutdown_notify.notified();
+              init_fence.wait();
+              sqlite_thread(backend, shutdown_notify, request_rx, batch_timeout)
+                .await
+            });
+        })
+        .unwrap();
+      let worker = SqliteWorker {
+        request_tx,
+        join_handle: Arc::new(Mutex::new(Some(join_handle))),
+      };
+      if i == 0 {
+        write_worker = Some(worker);
+      } else {
+        read_workers.push(worker);
+      }
+    }
+
+    assert_eq!(read_workers.len(), config.num_workers - 1);
+
+    init_fence.wait();
+
     Ok(Self {
-      join_handle: Arc::new(Mutex::new(Some(join_handle))),
       shutdown_notify,
-      request_tx,
       notifier,
+      write_worker: write_worker.unwrap(),
+      read_workers,
     })
   }
 }
 
 async fn sqlite_thread(
   mut backend: SqliteBackend,
-  shutdown_notify: Arc<Notify>,
-  mut request_rx: tokio::sync::mpsc::Receiver<SqliteRequest>,
+  shutdown_notify: Notified<'_>,
+  request_rx: tokio::sync::mpsc::Receiver<SqliteRequest>,
+  batch_timeout: Option<Duration>,
 ) {
+  let mut shutdown_notify = std::pin::pin!(shutdown_notify);
   let start = utc_now();
   if !backend.readonly {
     if let Err(err) = backend.queue_cleanup() {
@@ -254,6 +317,8 @@ async fn sqlite_thread(
     EXPIRY_FALLBACK_INTERVAL,
     EXPIRY_JITTER,
   );
+  let mut request_rx =
+    std::pin::pin!(ReceiverStream::new(request_rx).peekable());
   loop {
     let now = utc_now();
     let mut closest_deadline = queue_cleanup_deadline
@@ -273,7 +338,7 @@ async fn sqlite_thread(
     };
     select! {
       biased;
-      _ = shutdown_notify.notified() => {
+      _ = &mut shutdown_notify => {
         break;
       },
       _ = backend.notifier.0.dequeue_notify.notified(), if !dequeue_channels.is_empty() => {
@@ -283,15 +348,37 @@ async fn sqlite_thread(
         };
         queue_dequeue_deadline = compute_deadline_with_max_and_jitter(queue_next_ready, QUEUE_DEQUEUE_FALLBACK_INTERVAL, QUEUE_DEQUEUE_JITTER);
       },
-      req = request_rx.recv() => {
+      req = request_rx.next() => {
         match req {
           Some(SqliteRequest::SnapshotRead { requests, options, sender }) => {
             let result = backend.snapshot_read(requests, options);
             sender.send(result).ok(); // ignore error if receiver is gone
           },
           Some(SqliteRequest::AtomicWrite { write, sender }) => {
-            let result = backend.atomic_write(write);
-            sender.send(result).ok(); // ignore error if receiver is gone
+            let mut batch_writes = vec![write];
+            let mut batch_tx = vec![sender];
+
+            if let Some(batch_timeout) = batch_timeout {
+              let mut deadline = std::pin::pin!(tokio::time::sleep(batch_timeout));
+              while let Either::Left((Some(x), _)) = futures::future::select(request_rx.as_mut().peek(), &mut deadline).await {
+                if !matches!(x, SqliteRequest::AtomicWrite { .. }) {
+                  break;
+                }
+                let x = request_rx.next().await.unwrap();
+                match x {
+                  SqliteRequest::AtomicWrite { write, sender } => {
+                    batch_writes.push(write);
+                    batch_tx.push(sender);
+                  },
+                  _ => unreachable!(),
+                }
+              }
+            }
+
+            let result = backend.atomic_write_batched(batch_writes);
+            for (result, tx) in result.into_iter().zip(batch_tx.into_iter()) {
+              tx.send(result).ok(); // ignore error if receiver is gone
+            }
           },
           Some(SqliteRequest::QueueDequeueMessage { sender }) => {
             dequeue_channels.push_back(sender);
@@ -376,15 +463,32 @@ impl Sqlite {
     options: SnapshotReadOptions,
   ) -> Result<Vec<ReadRangeOutput>, SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
-    self
-      .request_tx
-      .send(SqliteRequest::SnapshotRead {
-        requests,
-        options,
-        sender,
-      })
+
+    let slot = if let Some(x) = self
+      .read_workers
+      .iter()
+      .find_map(|x| x.request_tx.try_reserve().ok())
+    {
+      x
+    } else if let Ok(x) = self.write_worker.request_tx.try_reserve() {
+      x
+    } else {
+      futures::future::select_all(
+        self
+          .read_workers
+          .iter()
+          .chain(std::iter::once(&self.write_worker))
+          .map(|x| x.request_tx.reserve().boxed()),
+      )
       .await
-      .map_err(|_| SqliteBackendError::DatabaseClosed)?;
+      .0
+      .map_err(|_| SqliteBackendError::DatabaseClosed)?
+    };
+    slot.send(SqliteRequest::SnapshotRead {
+      requests,
+      options,
+      sender,
+    });
     let (ranges, _current_versionstamp) = receiver
       .await
       .map_err(|_| SqliteBackendError::DatabaseClosed)??;
@@ -397,6 +501,7 @@ impl Sqlite {
   ) -> Result<Option<CommitResult>, SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
     self
+      .write_worker
       .request_tx
       .send(SqliteRequest::AtomicWrite { write, sender })
       .await
@@ -411,7 +516,7 @@ impl Sqlite {
   ) -> Result<Option<SqliteMessageHandle>, SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
     let req = SqliteRequest::QueueDequeueMessage { sender };
-    if self.request_tx.send(req).await.is_err() {
+    if self.write_worker.request_tx.send(req).await.is_err() {
       return Ok(None);
     }
     let Ok(dequeued_message) = receiver.await else {
@@ -420,7 +525,7 @@ impl Sqlite {
     Ok(Some(SqliteMessageHandle {
       id: dequeued_message.id,
       payload: Some(dequeued_message.payload),
-      request_tx: self.request_tx.clone(),
+      request_tx: self.write_worker.request_tx.clone(),
     }))
   }
 
@@ -452,6 +557,7 @@ impl Sqlite {
       loop {
         let (sender, receiver) = oneshot::channel();
         let res = this
+          .write_worker
           .request_tx
           .send(SqliteRequest::SnapshotRead {
             requests: requests.clone(),
@@ -485,15 +591,17 @@ impl Sqlite {
   }
 
   pub fn close(&self) {
-    self.shutdown_notify.notify_one();
-    self
-      .join_handle
-      .lock()
-      .unwrap()
-      .take()
-      .expect("can't close database twice")
-      .join()
-      .unwrap();
+    self.shutdown_notify.notify_waiters();
+    for w in std::iter::once(&self.write_worker).chain(self.read_workers.iter())
+    {
+      w.join_handle
+        .lock()
+        .unwrap()
+        .take()
+        .expect("can't close database twice")
+        .join()
+        .unwrap();
+    }
   }
 }
 

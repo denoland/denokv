@@ -10,10 +10,6 @@ authors.workspace = true
 [lib]
 path = "lib.rs"
 
-[features]
-default = ["bundled"]
-bundled = ["rusqlite/bundled"]
-
 [dependencies]
 anyhow.workspace = true
 async-stream.workspace= true
@@ -31,3 +27,4 @@ thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 v8_valueserializer.workspace = true
+tokio-stream.workspace = true

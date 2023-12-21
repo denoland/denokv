@@ -48,3 +48,4 @@ tokio-stream = "0.1"
 tokio-util = "0.7"
 url = "2"
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
+v8_valueserializer = "0.1.1"

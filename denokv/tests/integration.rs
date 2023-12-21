@@ -5,9 +5,16 @@ use std::process::Stdio;
 
 use denokv_proto::AtomicWrite;
 use denokv_proto::Database;
+use denokv_proto::KvValue;
 use denokv_proto::ReadRange;
+use denokv_remote::RemotePermissions;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
+use v8_valueserializer::value_eq;
+use v8_valueserializer::Heap;
+use v8_valueserializer::Value;
+use v8_valueserializer::ValueDeserializer;
+use v8_valueserializer::ValueSerializer;
 
 const ACCESS_TOKEN: &str = "1234abcd5678efgh";
 
@@ -229,7 +236,12 @@ async fn sum_type_mismatch() {
       checks: vec![],
       mutations: vec![denokv_proto::Mutation {
         key: vec![1],
-        kind: denokv_proto::MutationKind::Sum(denokv_proto::KvValue::U64(1)),
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::U64(1),
+          min_v8: vec![],
+          max_v8: vec![],
+          clamp: false,
+        },
         expire_at: None,
       }],
       enqueues: vec![],
@@ -240,4 +252,379 @@ async fn sum_type_mismatch() {
   assert!(err.to_string().contains(
     "Failed to perform 'sum' mutation on a non-U64 value in the database"
   ));
+
+  let res = remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::V8(
+            ValueSerializer::default()
+              .finish(&Heap::default(), &Value::BigInt(1.into()))
+              .unwrap(),
+          ),
+          min_v8: vec![],
+          max_v8: vec![],
+          clamp: false,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await;
+
+  let err = res.unwrap_err();
+  assert!(err.to_string().contains("unsupported value type"));
+}
+
+#[tokio::test]
+async fn sum_values() {
+  let (_child, addr) = start_server().await;
+  let client = reqwest::Client::new();
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
+
+  let metadata_endpoint = denokv_remote::MetadataEndpoint {
+    url,
+    access_token: ACCESS_TOKEN.to_string(),
+  };
+
+  let remote =
+    denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
+
+  // Sum(nothing, u64) -> u64
+  let commit_result = remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::U64(42),
+          min_v8: vec![],
+          max_v8: vec![],
+          clamp: false,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+  assert_ne!(commit_result.versionstamp, [0; 10]);
+
+  // Old sum semantics: u64 + u64 -> u64
+  remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::U64(1),
+          min_v8: vec![],
+          max_v8: vec![],
+          clamp: false,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+
+  let entry = read_key_1(&remote).await;
+  assert!(matches!(entry.value, denokv_proto::KvValue::U64(43)));
+
+  // Backward compat: u64 + v8(bigint) -> u64
+  remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::V8(
+            ValueSerializer::default()
+              .finish(&Heap::default(), &Value::BigInt(1.into()))
+              .unwrap(),
+          ),
+          min_v8: vec![],
+          max_v8: vec![],
+          clamp: false,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+
+  let entry = read_key_1(&remote).await;
+  assert!(matches!(entry.value, denokv_proto::KvValue::U64(44)));
+
+  // Reset to v8(bigint)
+  remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Set(denokv_proto::KvValue::V8(
+          ValueSerializer::default()
+            .finish(&Heap::default(), &Value::BigInt(42.into()))
+            .unwrap(),
+        )),
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+  let entry = read_key_1(&remote).await;
+  let KvValue::V8(value) = &entry.value else {
+    panic!("expected v8 value");
+  };
+  let (value, heap) = ValueDeserializer::default().read(value).unwrap();
+  assert!(value_eq(
+    (&value, &heap),
+    (&Value::BigInt(42.into()), &heap)
+  ));
+
+  // v8(bigint) + v8(bigint) -> v8(bigint)
+  remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::V8(
+            ValueSerializer::default()
+              .finish(&Heap::default(), &Value::BigInt(1.into()))
+              .unwrap(),
+          ),
+          min_v8: vec![],
+          max_v8: vec![],
+          clamp: false,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+  let entry = read_key_1(&remote).await;
+  let KvValue::V8(value) = &entry.value else {
+    panic!("expected v8 value");
+  };
+  let (value, heap) = ValueDeserializer::default().read(value).unwrap();
+  assert!(value_eq(
+    (&value, &heap),
+    (&Value::BigInt(43.into()), &heap)
+  ));
+
+  // v8(bigint) + v8(number) -> error
+  let res = remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::V8(
+            ValueSerializer::default()
+              .finish(&Heap::default(), &Value::I32(1))
+              .unwrap(),
+          ),
+          min_v8: vec![],
+          max_v8: vec![],
+          clamp: false,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await;
+
+  let err = res.unwrap_err();
+  assert!(err.to_string().contains("Cannot sum BigInt with Number"));
+
+  // clamp=false error
+  let res = remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::V8(
+            ValueSerializer::default()
+              .finish(&Heap::default(), &Value::BigInt(2.into()))
+              .unwrap(),
+          ),
+          min_v8: vec![],
+          max_v8: ValueSerializer::default()
+            .finish(&Heap::default(), &Value::BigInt(44.into()))
+            .unwrap(),
+          clamp: false,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await;
+
+  let err = res.unwrap_err();
+  assert!(
+    err
+      .to_string()
+      .contains("The result of a Sum operation would exceed its range limit"),
+    "{}",
+    err
+  );
+
+  // clamp=false ok
+  remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::V8(
+            ValueSerializer::default()
+              .finish(&Heap::default(), &Value::BigInt(1.into()))
+              .unwrap(),
+          ),
+          min_v8: vec![],
+          max_v8: ValueSerializer::default()
+            .finish(&Heap::default(), &Value::BigInt(44.into()))
+            .unwrap(),
+          clamp: false,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+  let entry = read_key_1(&remote).await;
+  let KvValue::V8(value) = &entry.value else {
+    panic!("expected v8 value");
+  };
+  let (value, heap) = ValueDeserializer::default().read(value).unwrap();
+  assert!(value_eq(
+    (&value, &heap),
+    (&Value::BigInt(44.into()), &heap)
+  ));
+
+  // clamp=true
+  remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::V8(
+            ValueSerializer::default()
+              .finish(&Heap::default(), &Value::BigInt(10.into()))
+              .unwrap(),
+          ),
+          min_v8: vec![],
+          max_v8: ValueSerializer::default()
+            .finish(&Heap::default(), &Value::BigInt(50.into()))
+            .unwrap(),
+          clamp: true,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+  let entry = read_key_1(&remote).await;
+  let KvValue::V8(value) = &entry.value else {
+    panic!("expected v8 value");
+  };
+  let (value, heap) = ValueDeserializer::default().read(value).unwrap();
+  assert!(value_eq(
+    (&value, &heap),
+    (&Value::BigInt(50.into()), &heap)
+  ));
+
+  // Sum(nothing, v8(bigint)) -> v8(bigint)
+  let commit_result = remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![2],
+        kind: denokv_proto::MutationKind::Sum {
+          value: denokv_proto::KvValue::V8(
+            ValueSerializer::default()
+              .finish(&Heap::default(), &Value::BigInt(10.into()))
+              .unwrap(),
+          ),
+          min_v8: vec![],
+          max_v8: vec![],
+          clamp: false,
+        },
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+  assert_ne!(commit_result.versionstamp, [0; 10]);
+
+  let ranges = remote
+    .snapshot_read(
+      vec![ReadRange {
+        start: vec![2],
+        end: vec![3],
+        limit: NonZeroU32::try_from(1).unwrap(),
+        reverse: false,
+      }],
+      denokv_proto::SnapshotReadOptions {
+        consistency: denokv_proto::Consistency::Strong,
+      },
+    )
+    .await
+    .unwrap();
+  assert_eq!(ranges.len(), 1);
+  let range = ranges.into_iter().next().unwrap();
+  assert_eq!(range.entries.len(), 1);
+  assert_eq!(range.entries[0].key, vec![2]);
+  let KvValue::V8(value) = &range.entries[0].value else {
+    panic!("expected v8 value");
+  };
+  let (value, heap) = ValueDeserializer::default().read(value).unwrap();
+  assert!(value_eq(
+    (&value, &heap),
+    (&Value::BigInt(10.into()), &heap)
+  ));
+}
+
+async fn read_key_1<P: RemotePermissions>(
+  remote: &denokv_remote::Remote<P>,
+) -> denokv_proto::KvEntry {
+  let ranges = remote
+    .snapshot_read(
+      vec![ReadRange {
+        start: vec![1],
+        end: vec![2],
+        limit: NonZeroU32::try_from(1).unwrap(),
+        reverse: false,
+      }],
+      denokv_proto::SnapshotReadOptions {
+        consistency: denokv_proto::Consistency::Strong,
+      },
+    )
+    .await
+    .unwrap();
+  assert_eq!(ranges.len(), 1);
+  let range = ranges.into_iter().next().unwrap();
+  assert_eq!(range.entries.len(), 1);
+  assert_eq!(range.entries[0].key, vec![1]);
+  range.entries.into_iter().next().unwrap()
 }

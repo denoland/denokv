@@ -320,7 +320,12 @@ pub struct Enqueue {
 pub enum MutationKind {
   Set(KvValue),
   Delete,
-  Sum(KvValue),
+  Sum {
+    value: KvValue,
+    min_v8: Vec<u8>,
+    max_v8: Vec<u8>,
+    clamp: bool,
+  },
   Min(KvValue),
   Max(KvValue),
   SetSuffixVersionstampedKey(KvValue),
@@ -330,7 +335,7 @@ impl MutationKind {
   pub fn value(&self) -> Option<&KvValue> {
     match self {
       MutationKind::Set(value) => Some(value),
-      MutationKind::Sum(value) => Some(value),
+      MutationKind::Sum { value, .. } => Some(value),
       MutationKind::Min(value) => Some(value),
       MutationKind::Max(value) => Some(value),
       MutationKind::SetSuffixVersionstampedKey(value) => Some(value),

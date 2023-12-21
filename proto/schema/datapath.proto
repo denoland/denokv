@@ -102,6 +102,21 @@ message Mutation {
   // An expiry time for the value, in milliseconds since the Unix epoch (UTC).
   // If this is set to 0, the value will never expire.
   int64 expire_at_ms = 4;
+
+  // A V8-encoded value that represents the minimum allowed value of the result
+  // of a `sum` operation. Only valid if `mutation_type` is `M_SUM` and
+  // `value.encoding` is `VE_V8`.
+  bytes sum_min = 5;
+
+  // A V8-encoded value that represents the maximum allowed value of the result
+  // of a `sum` operation. Only valid if `mutation_type` is `M_SUM` and
+  // `value.encoding` is `VE_V8`.
+  bytes sum_max = 6;
+
+  // If true, a result outside sum_min..=sum_max will be clamped. Otherwise, an
+  // error is returned and the atomic operation is not applied. Only valid if
+  // `mutation_type` is `M_SUM` and `value.encoding` is `VE_V8`.
+  bool sum_clamp = 7;
 }
 
 message KvValue {

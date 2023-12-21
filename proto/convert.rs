@@ -136,7 +136,12 @@ impl TryFrom<pb::AtomicWrite> for AtomicWrite {
         (pb::MutationType::MSum, Some(value)) => {
           let value = decode_value(value.data, value.encoding as i64)
             .ok_or(ConvertError::DecodeError)?;
-          MutationKind::Sum(value)
+          MutationKind::Sum {
+            value,
+            min_v8: mutation.sum_min,
+            max_v8: mutation.sum_max,
+            clamp: mutation.sum_clamp,
+          }
         }
         (pb::MutationType::MMin, Some(value)) => {
           let value = decode_value(value.data, value.encoding as i64)

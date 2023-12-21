@@ -580,6 +580,7 @@ impl<P: RemotePermissions> Database for Remote<P> {
             value: Some(encode_value_to_pb(value)),
             mutation_type: pb::MutationType::MSet as _,
             expire_at_ms,
+            ..Default::default()
           });
         }
         denokv_proto::MutationKind::Delete => {
@@ -588,14 +589,23 @@ impl<P: RemotePermissions> Database for Remote<P> {
             value: Some(encode_value_to_pb(KvValue::Bytes(vec![]))),
             mutation_type: pb::MutationType::MDelete as _,
             expire_at_ms,
+            ..Default::default()
           });
         }
-        denokv_proto::MutationKind::Sum(value) => {
+        denokv_proto::MutationKind::Sum {
+          value,
+          min_v8,
+          max_v8,
+          clamp,
+        } => {
           mutations.push(pb::Mutation {
             key: mutation.key,
             value: Some(encode_value_to_pb(value)),
             mutation_type: pb::MutationType::MSum as _,
             expire_at_ms,
+            sum_min: min_v8,
+            sum_max: max_v8,
+            sum_clamp: clamp,
           });
         }
         denokv_proto::MutationKind::Max(value) => {
@@ -604,6 +614,7 @@ impl<P: RemotePermissions> Database for Remote<P> {
             value: Some(encode_value_to_pb(value)),
             mutation_type: pb::MutationType::MMax as _,
             expire_at_ms,
+            ..Default::default()
           });
         }
         denokv_proto::MutationKind::Min(value) => {
@@ -612,6 +623,7 @@ impl<P: RemotePermissions> Database for Remote<P> {
             value: Some(encode_value_to_pb(value)),
             mutation_type: pb::MutationType::MMin as _,
             expire_at_ms,
+            ..Default::default()
           });
         }
         denokv_proto::MutationKind::SetSuffixVersionstampedKey(value) => {
@@ -620,6 +632,7 @@ impl<P: RemotePermissions> Database for Remote<P> {
             value: Some(encode_value_to_pb(value)),
             mutation_type: pb::MutationType::MSetSuffixVersionstampedKey as _,
             expire_at_ms,
+            ..Default::default()
           });
         }
       }

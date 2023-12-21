@@ -788,6 +788,7 @@ dependencies = [
  "hyper",
  "hyper-proxy",
  "log",
+ "num-bigint",
  "prost",
  "rand",
  "reqwest",
@@ -797,6 +798,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "uuid",
+ "v8_valueserializer",
 ]
 
 [[package]]
@@ -857,6 +859,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "uuid",
+ "v8_valueserializer",
 ]
 
 [[package]]
@@ -2475,6 +2478,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "v8_valueserializer"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97599c400fc79925922b58303e98fcb8fa88f573379a08ddb652e72cbd2e70f6"
+dependencies = [
+ "bitflags 2.4.1",
+ "encoding_rs",
+ "indexmap 2.1.0",
+ "num-bigint",
+ "serde",
+ "thiserror",
+ "wtf8",
+]
+
+[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2724,6 +2742,12 @@ dependencies = [
  "cfg-if",
  "windows-sys",
 ]
+
+[[package]]
+name = "wtf8"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c01ae8492c38f52376efd3a17d0994b6bcf3df1e39c0226d458b7d81670b2a06"
 
 [[package]]
 name = "xmlparser"

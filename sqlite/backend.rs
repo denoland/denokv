@@ -1,6 +1,7 @@
 // Copyright 2023 the Deno authors. All rights reserved. MIT license.
 
 use std::collections::HashSet;
+use std::mem::discriminant;
 use std::time::Duration;
 
 use chrono::DateTime;
@@ -18,6 +19,7 @@ use denokv_proto::ReadRangeOutput;
 use denokv_proto::SnapshotReadOptions;
 use denokv_proto::Versionstamp;
 use denokv_proto::VALUE_ENCODING_V8;
+use num_bigint::BigInt;
 use rand::Rng;
 use rand::RngCore;
 use rusqlite::params;
@@ -27,6 +29,7 @@ use rusqlite::Transaction;
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::sum_operand::SumOperand;
 use crate::time::utc_now;
 use crate::SqliteNotifier;
 
@@ -141,6 +144,9 @@ pub enum SqliteBackendError {
 
   #[error("{0}")]
   TypeMismatch(String),
+
+  #[error("The result of a Sum operation would exceed its range limit")]
+  SumOutOfRange,
 }
 
 pub struct SqliteBackend {
@@ -374,10 +380,27 @@ impl SqliteBackend {
             .execute(params![mutation.key])?;
           assert!(changed == 0 || changed == 1)
         }
-        MutationKind::Sum(operand) => {
-          mutate_le64(tx, &mutation.key, "sum", operand, version, |a, b| {
-            a.wrapping_add(b)
-          })?;
+        MutationKind::Sum {
+          value: operand,
+          min_v8,
+          max_v8,
+          clamp,
+        } => {
+          if matches!(operand, KvValue::U64(_)) {
+            mutate_le64(tx, &mutation.key, "sum", operand, version, |a, b| {
+              a.wrapping_add(b)
+            })?;
+          } else {
+            sum_v8(
+              tx,
+              &mutation.key,
+              operand,
+              min_v8.clone(),
+              max_v8.clone(),
+              *clamp,
+              version,
+            )?;
+          }
         }
         MutationKind::Min(operand) => {
           mutate_le64(tx, &mutation.key, "min", operand, version, |a, b| {
@@ -804,6 +827,141 @@ fn mutate_le64(
   ])?;
   assert_eq!(changed, 1);
 
+  Ok(())
+}
+
+fn sum_v8(
+  tx: &Transaction,
+  key: &[u8],
+  operand: &KvValue,
+  min_v8: Vec<u8>,
+  max_v8: Vec<u8>,
+  clamp: bool,
+  new_version: i64,
+) -> Result<(), SqliteBackendError> {
+  let (Ok(operand), Ok(result_min), Ok(result_max)) = (
+    SumOperand::parse(operand),
+    SumOperand::parse_optional(&KvValue::V8(min_v8)),
+    SumOperand::parse_optional(&KvValue::V8(max_v8)),
+  ) else {
+    return Err(SqliteBackendError::TypeMismatch(
+      "Some of the parameters are not valid V8 values".into(),
+    ));
+  };
+
+  // min/max parameters, if any, must match the type of `operand`
+  if [&result_min, &result_max].into_iter().any(|x| {
+    x.as_ref()
+      .map(|x| discriminant(x) != discriminant(&operand))
+      .unwrap_or_default()
+  }) {
+    return Err(SqliteBackendError::TypeMismatch(
+      "Min/max parameters have different types than the operand".into(),
+    ));
+  }
+
+  let old_value = tx
+    .prepare_cached(STATEMENT_KV_POINT_GET_VALUE_ONLY)?
+    .query_row([key], |row| {
+      let value: Vec<u8> = row.get(0)?;
+      let encoding: i64 = row.get(1)?;
+      Ok((value, encoding))
+    })
+    .optional()?;
+
+  let old_value = match old_value {
+    Some((value, encoding)) => {
+      SumOperand::parse(&decode_value(value, encoding).ok_or_else(|| {
+        SqliteBackendError::TypeMismatch("Invalid sum operand".into())
+      })?)
+      .map_err(|e| SqliteBackendError::TypeMismatch(e.to_string()))?
+    }
+
+    None => {
+      let (new_value, encoding) = encode_value_owned(operand.encode());
+      let changed = tx
+        .prepare_cached(STATEMENT_KV_POINT_SET)?
+        .execute(params![key, &new_value[..], encoding, new_version, -1i64,])?;
+      assert_eq!(changed, 1);
+      return Ok(());
+    }
+  };
+
+  // Backward compat: sum(KvU64, bigint) -> KvU64
+  let operand = match (&old_value, operand, &result_min, &result_max, &clamp) {
+    (SumOperand::KvU64(_), SumOperand::BigInt(x), None, None, false)
+      if x >= BigInt::from(0u64) && x <= BigInt::from(std::u64::MAX) =>
+    {
+      SumOperand::KvU64(x.try_into().unwrap())
+    }
+    (_, x, _, _, _) => x,
+  };
+
+  let output = (|| match (&old_value, &operand) {
+    (SumOperand::BigInt(current), SumOperand::BigInt(operand)) => {
+      let mut current = current + operand;
+      if let Some(SumOperand::BigInt(result_min)) = &result_min {
+        if current < *result_min {
+          if !clamp {
+            return Err(SqliteBackendError::SumOutOfRange);
+          }
+          current = result_min.clone();
+        }
+      }
+      if let Some(SumOperand::BigInt(result_max)) = &result_max {
+        if current > *result_max {
+          if !clamp {
+            return Err(SqliteBackendError::SumOutOfRange);
+          }
+          current = result_max.clone();
+        }
+      }
+      Ok(SumOperand::BigInt(current))
+    }
+    (SumOperand::Number(current), SumOperand::Number(operand)) => {
+      let mut current = current + operand;
+      if let Some(SumOperand::Number(result_min)) = &result_min {
+        if current < *result_min {
+          if !clamp {
+            return Err(SqliteBackendError::SumOutOfRange);
+          }
+          current = *result_min;
+        }
+      }
+      if let Some(SumOperand::Number(result_max)) = &result_max {
+        if current > *result_max {
+          if !clamp {
+            return Err(SqliteBackendError::SumOutOfRange);
+          }
+          current = *result_max;
+        }
+      }
+      Ok(SumOperand::Number(current))
+    }
+    (SumOperand::KvU64(current), SumOperand::KvU64(operand)) => {
+      if result_min.is_some() || result_max.is_some() {
+        return Err(SqliteBackendError::TypeMismatch(
+          "Cannot use min/max parameters with KvU64 operands".into(),
+        ));
+      }
+      Ok(SumOperand::KvU64(current.wrapping_add(*operand)))
+    }
+    _ => Err(SqliteBackendError::TypeMismatch(format!(
+      "Cannot sum {} with {}",
+      old_value.variant_name(),
+      operand.variant_name(),
+    ))),
+  })()?;
+
+  let (new_value, encoding) = encode_value_owned(output.encode());
+  let changed = tx.prepare_cached(STATEMENT_KV_POINT_SET)?.execute(params![
+    key,
+    &new_value[..],
+    encoding as i32,
+    new_version,
+    -1i64,
+  ])?;
+  assert_eq!(changed, 1);
   Ok(())
 }
 

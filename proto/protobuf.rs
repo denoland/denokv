@@ -2,11 +2,9 @@
 
 // Generated code, disable lints
 #[allow(clippy::all, non_snake_case)]
-pub mod datapath {
-  include!(concat!(env!("OUT_DIR"), "/com.deno.kv.datapath.rs"));
-}
+#[path = "protobuf/com.deno.kv.datapath.rs"]
+pub mod datapath;
 
 #[allow(clippy::all, non_snake_case)]
-pub mod backup {
-  include!(concat!(env!("OUT_DIR"), "/com.deno.kv.backup.rs"));
-}
+#[path = "protobuf/com.deno.kv.backup.rs"]
+pub mod backup;

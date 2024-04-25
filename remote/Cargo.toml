@@ -18,13 +18,16 @@ bytes.workspace = true
 chrono.workspace = true
 denokv_proto.workspace = true
 futures.workspace = true
+http.workspace = true
 log.workspace = true
 prost.workspace = true
 rand.workspace = true
-reqwest.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 url.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true

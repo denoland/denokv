@@ -3,13 +3,19 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::process::Stdio;
 
+use bytes::Bytes;
 use denokv_proto::AtomicWrite;
 use denokv_proto::Database;
 use denokv_proto::KvValue;
 use denokv_proto::ReadRange;
 use denokv_remote::RemotePermissions;
+use denokv_remote::RemoteResponse;
+use denokv_remote::RemoteTransport;
+use futures::Stream;
+use futures::TryStreamExt;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
+use url::Url;
 use v8_valueserializer::value_eq;
 use v8_valueserializer::Heap;
 use v8_valueserializer::Value;
@@ -17,6 +23,39 @@ use v8_valueserializer::ValueDeserializer;
 use v8_valueserializer::ValueSerializer;
 
 const ACCESS_TOKEN: &str = "1234abcd5678efgh";
+
+#[derive(Clone)]
+struct ReqwestClient(reqwest::Client);
+struct ReqwestResponse(reqwest::Response);
+
+impl RemoteTransport for ReqwestClient {
+  type Response = ReqwestResponse;
+  async fn post(
+    &self,
+    url: Url,
+    headers: http::HeaderMap,
+    body: Bytes,
+  ) -> Result<(Url, http::StatusCode, Self::Response), anyhow::Error> {
+    let res = self.0.post(url).headers(headers).body(body).send().await?;
+    let url = res.url().clone();
+    let status = res.status();
+    Ok((url, status, ReqwestResponse(res)))
+  }
+}
+
+impl RemoteResponse for ReqwestResponse {
+  async fn bytes(self) -> Result<Bytes, anyhow::Error> {
+    Ok(self.0.bytes().await?)
+  }
+  fn stream(
+    self,
+  ) -> impl Stream<Item = Result<Bytes, anyhow::Error>> + Send + Sync {
+    self.0.bytes_stream().map_err(|e| e.into())
+  }
+  async fn text(self) -> Result<String, anyhow::Error> {
+    Ok(self.0.text().await?)
+  }
+}
 
 fn denokv_exe() -> PathBuf {
   let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -100,7 +139,7 @@ impl denokv_remote::RemotePermissions for DummyPermissions {
 #[tokio::test]
 async fn basics() {
   let (_child, addr) = start_server().await;
-  let client = reqwest::Client::new();
+  let client = ReqwestClient(reqwest::Client::new());
   let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
 
   let metadata_endpoint = denokv_remote::MetadataEndpoint {
@@ -174,7 +213,7 @@ async fn basics() {
 #[tokio::test]
 async fn no_auth() {
   let (_child, addr) = start_server().await;
-  let client = reqwest::Client::new();
+  let client = ReqwestClient(reqwest::Client::new());
   let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
 
   let metadata_endpoint = denokv_remote::MetadataEndpoint {
@@ -204,7 +243,7 @@ async fn no_auth() {
 #[tokio::test]
 async fn sum_type_mismatch() {
   let (_child, addr) = start_server().await;
-  let client = reqwest::Client::new();
+  let client = ReqwestClient(reqwest::Client::new());
   let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
 
   let metadata_endpoint = denokv_remote::MetadataEndpoint {
@@ -281,7 +320,7 @@ async fn sum_type_mismatch() {
 #[tokio::test]
 async fn sum_values() {
   let (_child, addr) = start_server().await;
-  let client = reqwest::Client::new();
+  let client = ReqwestClient(reqwest::Client::new());
   let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
 
   let metadata_endpoint = denokv_remote::MetadataEndpoint {
@@ -605,8 +644,8 @@ async fn sum_values() {
   ));
 }
 
-async fn read_key_1<P: RemotePermissions>(
-  remote: &denokv_remote::Remote<P>,
+async fn read_key_1<P: RemotePermissions, T: RemoteTransport>(
+  remote: &denokv_remote::Remote<P, T>,
 ) -> denokv_proto::KvEntry {
   let ranges = remote
     .snapshot_read(

@@ -4,6 +4,7 @@ mod time;
 
 use std::io;
 use std::ops::Sub;
+use std::pin::pin;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,16 +29,18 @@ use denokv_proto::ReadRange;
 use denokv_proto::ReadRangeOutput;
 use denokv_proto::SnapshotReadOptions;
 use denokv_proto::WatchKeyOutput;
+use futures::Future;
 use futures::Stream;
 use futures::StreamExt;
 use futures::TryStreamExt;
+use http::HeaderMap;
+use http::HeaderValue;
+use http::StatusCode;
 use log::debug;
 use log::error;
 use log::warn;
 use prost::Message;
 use rand::Rng;
-use reqwest::Response;
-use reqwest::StatusCode;
 use serde::Deserialize;
 use time::utc_now;
 use tokio::sync::watch;
@@ -55,6 +58,18 @@ const METADATA_BACKOFF_BASE: Duration = Duration::from_secs(5);
 pub struct MetadataEndpoint {
   pub url: Url,
   pub access_token: String,
+}
+
+impl MetadataEndpoint {
+  pub fn headers(&self) -> HeaderMap {
+    let mut headers = HeaderMap::with_capacity(2);
+    headers.insert(
+      "Authorization",
+      format!("Bearer {}", self.access_token).try_into().unwrap(),
+    );
+    headers.insert("Content-Type", "application/json".try_into().unwrap());
+    headers
+  }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -83,6 +98,39 @@ struct Metadata {
   expires_at: DateTime<Utc>,
 }
 
+impl Metadata {
+  pub fn headers(&self) -> HeaderMap {
+    let mut headers = HeaderMap::with_capacity(3);
+    headers.insert(
+      "Authorization",
+      format!("Bearer {}", self.token).try_into().unwrap(),
+    );
+    match self.version {
+      ProtocolVersion::V1 => {
+        headers.insert(
+          "x-transaction-domain-id",
+          self.database_id.to_string().try_into().unwrap(),
+        );
+      }
+      ProtocolVersion::V2 => {
+        headers.insert(
+          "x-denokv-database-id",
+          self.database_id.to_string().try_into().unwrap(),
+        );
+        headers.insert("x-denokv-version", HeaderValue::from_static("2"));
+      }
+      ProtocolVersion::V3 => {
+        headers.insert(
+          "x-denokv-database-id",
+          self.database_id.to_string().try_into().unwrap(),
+        );
+        headers.insert("x-denokv-version", HeaderValue::from_static("3"));
+      }
+    };
+    headers
+  }
+}
+
 #[derive(Clone)]
 enum MetadataState {
   Pending,
@@ -94,6 +142,39 @@ pub trait RemotePermissions: Clone + 'static {
   fn check_net_url(&self, url: &Url) -> Result<(), anyhow::Error>;
 }
 
+/// Implements a transport that can POST bytes to a remote service.
+pub trait RemoteTransport: Clone + Send + Sync + 'static {
+  type Response: RemoteResponse;
+
+  /// Perform an HTTP POST with the given body and headers, returning the final URL,
+  /// status code and response object.
+  fn post(
+    &self,
+    url: Url,
+    headers: http::HeaderMap,
+    body: Bytes,
+  ) -> impl Future<
+    Output = Result<(Url, http::StatusCode, Self::Response), anyhow::Error>,
+  > + Send
+       + Sync;
+}
+
+/// A response object.
+pub trait RemoteResponse: Send + Sync {
+  /// The bytes associated with this response.
+  fn bytes(
+    self,
+  ) -> impl Future<Output = Result<Bytes, anyhow::Error>> + Send + Sync;
+  /// The text associated with this response.
+  fn text(
+    self,
+  ) -> impl Future<Output = Result<String, anyhow::Error>> + Send + Sync;
+  /// The stream of bytes associated with this response.
+  fn stream(
+    self,
+  ) -> impl Stream<Item = Result<Bytes, anyhow::Error>> + Send + Sync;
+}
+
 enum RetryableResult<T, E> {
   Ok(T),
   Retry,
@@ -101,16 +182,16 @@ enum RetryableResult<T, E> {
 }
 
 #[derive(Clone)]
-pub struct Remote<P: RemotePermissions> {
+pub struct Remote<P: RemotePermissions, T: RemoteTransport> {
   permissions: P,
-  client: reqwest::Client,
+  client: T,
   metadata_refresher: Arc<JoinHandle<()>>,
   metadata: watch::Receiver<MetadataState>,
 }
 
-impl<P: RemotePermissions> Remote<P> {
+impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
   pub fn new(
-    client: reqwest::Client,
+    client: T,
     permissions: P,
     metadata_endpoint: MetadataEndpoint,
   ) -> Self {
@@ -132,7 +213,7 @@ impl<P: RemotePermissions> Remote<P> {
     &self,
     method: &'static str,
     req: Req,
-  ) -> Result<(Response, ProtocolVersion), anyhow::Error> {
+  ) -> Result<(T::Response, ProtocolVersion), anyhow::Error> {
     let attempt = 0;
     let req_body = Bytes::from(req.encode_to_vec());
     loop {
@@ -168,26 +249,15 @@ impl<P: RemotePermissions> Remote<P> {
 
       let req = self
         .client
-        .post(url.clone())
-        .body(req_body.clone())
-        .bearer_auth(&metadata.token);
+        .post(url.clone(), metadata.headers(), req_body.clone())
+        .await;
 
-      let req = match metadata.version {
-        ProtocolVersion::V1 => req
-          .header("x-transaction-domain-id", metadata.database_id.to_string()),
-        ProtocolVersion::V2 => req
-          .header("x-denokv-database-id", metadata.database_id.to_string())
-          .header("x-denokv-version", "2"),
-        ProtocolVersion::V3 => req
-          .header("x-denokv-database-id", metadata.database_id.to_string())
-          .header("x-denokv-version", "3"),
-      };
-
-      let resp = match req.send().await {
-        Ok(resp) if resp.status() == StatusCode::OK => resp,
-        Ok(resp) if resp.status().is_server_error() => {
-          let status = resp.status();
-          let body = resp.text().await.unwrap_or_else(|_| String::new());
+      let resp = match req {
+        Ok(resp) if resp.1 == StatusCode::OK => resp,
+        Ok(resp) if resp.1.is_server_error() => {
+          let status = resp.1;
+          let b = resp.2.bytes().await.unwrap_or_default();
+          let body = String::from_utf8_lossy(&b);
           error!(
             "KV Connect failed to call '{}' (status={}): {}",
             url, status, body
@@ -196,8 +266,9 @@ impl<P: RemotePermissions> Remote<P> {
           continue;
         }
         Ok(resp) => {
-          let status = resp.status();
-          let body = resp.text().await.unwrap_or_else(|_| String::new());
+          let status = resp.1;
+          let b = resp.2.bytes().await.unwrap_or_default();
+          let body = String::from_utf8_lossy(&b);
           return Err(anyhow::anyhow!(
             "KV Connect failed to call '{}' (status={}): {}",
             url,
@@ -212,7 +283,7 @@ impl<P: RemotePermissions> Remote<P> {
         }
       };
 
-      return Ok((resp, metadata.version));
+      return Ok((resp.2, metadata.version));
     }
   }
 
@@ -229,7 +300,7 @@ impl<P: RemotePermissions> Remote<P> {
   > {
     let (resp, version) = self.call_raw(method, req).await?;
     let stream = resp
-      .bytes_stream()
+      .stream()
       .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
     Ok((stream, version))
   }
@@ -258,7 +329,7 @@ impl<P: RemotePermissions> Remote<P> {
   }
 }
 
-impl<P: RemotePermissions> Drop for Remote<P> {
+impl<P: RemotePermissions, T: RemoteTransport> Drop for Remote<P, T> {
   fn drop(&mut self) {
     self.metadata_refresher.abort();
   }
@@ -271,8 +342,8 @@ async fn randomized_exponential_backoff(base: Duration, attempt: u64) {
   tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
 }
 
-async fn metadata_refresh_task(
-  client: reqwest::Client,
+async fn metadata_refresh_task<T: RemoteTransport>(
+  client: T,
   metadata_endpoint: MetadataEndpoint,
   tx: watch::Sender<MetadataState>,
 ) {
@@ -319,20 +390,20 @@ async fn metadata_refresh_task(
   }
 }
 
-async fn fetch_metadata(
-  client: &reqwest::Client,
+async fn fetch_metadata<T: RemoteTransport>(
+  client: &T,
   metadata_endpoint: &MetadataEndpoint,
 ) -> RetryableResult<Metadata, String> {
+  let body = serde_json::to_vec(&MetadataExchangeRequest {
+    supported_versions: vec![1, 2, 3],
+  })
+  .unwrap();
   let res = match client
-    .post(metadata_endpoint.url.clone())
-    .header(
-      "authorization",
-      format!("Bearer {}", metadata_endpoint.access_token),
+    .post(
+      metadata_endpoint.url.clone(),
+      metadata_endpoint.headers(),
+      body.into(),
     )
-    .json(&MetadataExchangeRequest {
-      supported_versions: vec![1, 2, 3],
-    })
-    .send()
     .await
   {
     Ok(res) => res,
@@ -345,17 +416,17 @@ async fn fetch_metadata(
     }
   };
 
-  let res = match res.status() {
+  let res = match res.1 {
     StatusCode::OK => res,
     status if status.is_client_error() => {
-      let body = res.text().await.unwrap_or_else(|_| String::new());
+      let body = res.2.text().await.unwrap_or_else(|_| String::new());
       return RetryableResult::Err(format!(
         "Failed to fetch metadata: {}",
         body
       ));
     }
     status if status.is_server_error() => {
-      let body = res.text().await.unwrap_or_else(|_| String::new());
+      let body = res.2.text().await.unwrap_or_else(|_| String::new());
       error!(
         "KV Connect to '{}' failed to fetch metadata (status={}): {}",
         metadata_endpoint.url, status, body
@@ -370,9 +441,9 @@ async fn fetch_metadata(
     }
   };
 
-  let base_url = res.url().clone();
+  let base_url = res.0;
 
-  let body = match res.text().await {
+  let body = match res.2.text().await {
     Ok(body) => body,
     Err(err) => {
       return RetryableResult::Err(format!(
@@ -460,7 +531,7 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
 }
 
 #[async_trait(?Send)]
-impl<P: RemotePermissions> Database for Remote<P> {
+impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
   type QMH = DummyQueueMessageHandle;
 
   async fn snapshot_read(
@@ -685,6 +756,7 @@ impl<P: RemotePermissions> Database for Remote<P> {
         };
 
         let (stream, _) = this.call_stream("watch", req).await?;
+        let stream = pin!(stream);
         let reader = StreamReader::new(stream);
         let codec = LengthDelimitedCodec::builder()
           .little_endian()

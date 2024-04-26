@@ -64,10 +64,10 @@ impl MetadataEndpoint {
   pub fn headers(&self) -> HeaderMap {
     let mut headers = HeaderMap::with_capacity(2);
     headers.insert(
-      "Authorization",
+      "authorization",
       format!("Bearer {}", self.access_token).try_into().unwrap(),
     );
-    headers.insert("Content-Type", "application/json".try_into().unwrap());
+    headers.insert("content-type", "application/json".try_into().unwrap());
     headers
   }
 }
@@ -102,7 +102,7 @@ impl Metadata {
   pub fn headers(&self) -> HeaderMap {
     let mut headers = HeaderMap::with_capacity(3);
     headers.insert(
-      "Authorization",
+      "authorization",
       format!("Bearer {}", self.token).try_into().unwrap(),
     );
     match self.version {

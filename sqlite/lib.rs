@@ -579,6 +579,10 @@ impl Sqlite {
         }
         yield outputs;
 
+        // If subscriptions is empty, `future::select_all` will panic
+        if subscriptions.is_empty() {
+          return;
+        }
         let futures = subscriptions.iter_mut().map(|subscription| {
           Box::pin(subscription.wait_until_updated(current_versionstamp))
         });

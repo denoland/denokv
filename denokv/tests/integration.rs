@@ -8,13 +8,16 @@ use denokv_proto::AtomicWrite;
 use denokv_proto::Database;
 use denokv_proto::KvValue;
 use denokv_proto::ReadRange;
+use denokv_proto::WatchKeyOutput;
 use denokv_remote::RemotePermissions;
 use denokv_remote::RemoteResponse;
 use denokv_remote::RemoteTransport;
 use futures::Stream;
+use futures::StreamExt;
 use futures::TryStreamExt;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
+use tokio::task::LocalSet;
 use url::Url;
 use v8_valueserializer::value_eq;
 use v8_valueserializer::Heap;
@@ -208,6 +211,63 @@ async fn basics() {
   assert_eq!(range.entries[0].versionstamp, commit_result.versionstamp);
 
   println!("remote");
+}
+
+#[tokio::test]
+async fn watch() {
+  let (_child, addr) = start_server().await;
+  let client = ReqwestClient(reqwest::Client::new());
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
+
+  let metadata_endpoint = denokv_remote::MetadataEndpoint {
+    url,
+    access_token: ACCESS_TOKEN.to_string(),
+  };
+
+  let remote =
+    denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
+  let remote2 = remote.clone();
+  let local = LocalSet::new();
+  let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+  let a = local.spawn_local(async move {
+    let mut s = remote2.watch(vec![vec![1]]);
+    while let Some(w) = s.next().await {
+      let w = w.expect("watch success");
+      eprintln!("{w:?}");
+      tx.send(w).expect("send success");
+    }
+  });
+  local.spawn_local(async move {
+    for i in 0..10 {
+      _ = remote
+        .atomic_write(AtomicWrite {
+          checks: vec![],
+          mutations: vec![denokv_proto::Mutation {
+            key: vec![1],
+            kind: denokv_proto::MutationKind::Set(denokv_proto::KvValue::U64(
+              i,
+            )),
+            expire_at: None,
+          }],
+          enqueues: vec![],
+        })
+        .await
+        .unwrap()
+        .expect("commit success");
+    }
+    a.abort();
+  });
+  local.await;
+
+  let mut count = 0;
+  while let Some(w) = rx.recv().await {
+    for w in w {
+      if let WatchKeyOutput::Changed { entry: Some(_) } = w {
+        count += 1;
+      }
+    }
+  }
+  assert!(count > 0);
 }
 
 #[tokio::test]

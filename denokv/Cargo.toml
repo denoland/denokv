@@ -44,8 +44,11 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+bytes.workspace = true
 denokv_remote.workspace = true
+http.workspace = true
 num-bigint.workspace = true
 tempfile.workspace = true
 reqwest.workspace = true
+url.workspace = true
 v8_valueserializer.workspace = true

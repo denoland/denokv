@@ -10,6 +10,9 @@ authors.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+build_protos = ["prost-build"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -21,4 +24,4 @@ serde.workspace = true
 uuid.workspace = true
 
 [build-dependencies]
-prost-build.workspace = true
+prost-build = { workspace = true, optional = true }

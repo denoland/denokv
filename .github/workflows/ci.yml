@@ -39,6 +39,13 @@ jobs:
       - name: Check linting
         run: cargo clippy --release --all-targets --all-features -- -D clippy::all
 
+      - name: Check generated protobuf sources are up to date
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        run: |-
+          cargo check -p denokv_proto --features='build_protos'
+          cargo fmt -p denokv_proto
+          git diff --exit-code
+
       - name: Build
         run: cargo build --release --all-targets --all-features --tests -v
 

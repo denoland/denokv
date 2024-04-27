@@ -2,10 +2,12 @@ use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
 
 use bytes::Bytes;
 use denokv_proto::AtomicWrite;
 use denokv_proto::Database;
+use denokv_proto::KvEntry;
 use denokv_proto::KvValue;
 use denokv_proto::ReadRange;
 use denokv_proto::WatchKeyOutput;
@@ -229,12 +231,17 @@ async fn watch() {
   let remote2 = remote.clone();
   let local = LocalSet::new();
   let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-  let a = local.spawn_local(async move {
+  local.spawn_local(async move {
     let mut s = remote2.watch(vec![vec![1]]);
     while let Some(w) = s.next().await {
       let w = w.expect("watch success");
-      eprintln!("{w:?}");
-      tx.send(w).expect("send success");
+      eprintln!("Watch output: {w:?}");
+      for w in w {
+        if let WatchKeyOutput::Changed { entry: Some(_) } = w {
+          tx.send(w).expect("send success");
+          return;
+        }
+      }
     }
   });
   local.spawn_local(async move {
@@ -255,19 +262,15 @@ async fn watch() {
         .unwrap()
         .expect("commit success");
     }
-    a.abort();
   });
-  local.await;
-
-  let mut count = 0;
-  while let Some(w) = rx.recv().await {
-    for w in w {
-      if let WatchKeyOutput::Changed { entry: Some(_) } = w {
-        count += 1;
-      }
-    }
-  }
-  assert!(count > 0);
+  tokio::time::timeout(Duration::from_secs(60), local)
+    .await
+    .expect("no timeout");
+  let w = rx.try_recv().expect("recv success");
+  let WatchKeyOutput::Changed { entry: Some(entry) } = w else {
+    panic!("Unexpected watch result");
+  };
+  assert_eq!(entry.key, vec![1]);
 }
 
 #[tokio::test]

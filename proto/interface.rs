@@ -351,6 +351,7 @@ pub struct CommitResult {
   pub versionstamp: Versionstamp,
 }
 
+#[derive(Debug)]
 /// The message notifying about the status of a single key in a watch request.
 pub enum WatchKeyOutput {
   /// The key has not changed since the last delivery. Deliver the entry.

@@ -245,10 +245,6 @@ export class WatchCache {
   }
 }
 
-//
-
-const emptyVersionstamp = new Uint8Array(10);
-
 function computeReadRangeForKey(packedKey: Uint8Array): ReadRange {
   return {
     start: packedKey,
@@ -264,7 +260,9 @@ function computeKvCheckMessage(
   return {
     key: packKey(key),
     versionstamp: (versionstamp === null || versionstamp === undefined)
-      ? emptyVersionstamp
+      /* in proto3 all fields are optional, but the generated types don't
+       * like it, so we have to cast it manually */
+      ? undefined as unknown as Uint8Array
       : decodeHex(versionstamp),
   };
 }

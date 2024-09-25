@@ -15,25 +15,42 @@ jobs:
       contents: read
 
     steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Set up QEMU (for multi-platform builds)
+        uses: docker/setup-qemu-action@v2
+
       - name: Clone repository
         uses: actions/checkout@v3
 
-      - name: Build image
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build amd64 image for testing
         run: |
-          docker build -f Dockerfile -t denokv .
+          docker buildx create --use
+          docker buildx build --platform linux/amd64 \
+            --tag denokv:test \
+            --output type=docker .
 
       - name: Smoke test image
         run: |
-          docker run -i --init denokv --help
+          docker run --platform linux/amd64 -i --init denokv:test --help
 
-      - name: Login to ghcr.io
+      - name: Log in to ghcr.io
         if: github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
 
-      - name: Push images
+      - name: Build and push multi-platform image
         if: github.repository == 'denoland/denokv' && startsWith(github.ref, 'refs/tags/')
         run: |
-          docker tag denokv ghcr.io/denoland/denokv:${GITHUB_REF#refs/*/}
-          docker push ghcr.io/denoland/denokv:${GITHUB_REF#refs/*/}
-          docker tag denokv ghcr.io/denoland/denokv:latest
-          docker push ghcr.io/denoland/denokv:latest
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --tag ghcr.io/denoland/denokv:${GITHUB_REF#refs/*/} \
+            --tag ghcr.io/denoland/denokv:latest \
+            --push .

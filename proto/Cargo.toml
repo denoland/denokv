@@ -1,7 +1,7 @@
 [package]
 name = "denokv_proto"
 description = "Fundamental types, traits, and protobuf models for denokv"
-version = "0.8.2"
+version = "0.8.3"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

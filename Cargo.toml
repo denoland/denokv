@@ -9,10 +9,10 @@ authors = ["the Deno authors"]
 edition = "2021"
 
 [workspace.dependencies]
-denokv_proto = { version = "0.8.3", path = "./proto" }
-denokv_sqlite = { version = "0.8.3", path = "./sqlite" }
-denokv_remote = { version = "0.8.3", path = "./remote" }
-denokv_timemachine = { version = "0.8.3", path = "./timemachine" }
+denokv_proto = { version = "0.8.4", path = "./proto" }
+denokv_sqlite = { version = "0.8.4", path = "./sqlite" }
+denokv_remote = { version = "0.8.4", path = "./remote" }
+denokv_timemachine = { version = "0.8.4", path = "./timemachine" }
 
 anyhow = "1"
 async-stream = "0.3"
@@ -35,8 +35,8 @@ hyper = { version = "0.14", features = ["client"] }
 hyper-proxy = { version = "0.9.1", default-features = false }
 log = "0.4.20"
 num-bigint = "0.4"
-prost = "0.11"
-prost-build = "0.11"
+prost = "0.13"
+prost-build = "0.13"
 rand = "0.8.5"
 reqwest = { version = "0.12.4", default-features = false, features = ["json", "stream"] }
 rusqlite = "0.32.0"

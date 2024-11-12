@@ -268,7 +268,7 @@ async fn run_sync(
 ) -> anyhow::Result<()> {
   let mut s3_config = aws_config::from_env()
     .sleep_impl(Arc::new(TokioSleep::new()))
-    .retry_config(RetryConfig::standard().with_max_attempts(std::u32::MAX));
+    .retry_config(RetryConfig::standard().with_max_attempts(u32::MAX));
 
   if let Some(endpoint) = &options.s3_endpoint {
     s3_config = s3_config.endpoint_url(endpoint);

@@ -422,7 +422,7 @@ impl TimeTravelControl {
     for row in stmt.query_map(
       rusqlite::params![
         start.timestamp_millis(),
-        end.map(|x| x.timestamp_millis()).unwrap_or(std::i64::MAX)
+        end.map(|x| x.timestamp_millis()).unwrap_or(i64::MAX)
       ],
       |row| {
         let mut versionstamp = [0u8; 10];

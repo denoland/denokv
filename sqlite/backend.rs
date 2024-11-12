@@ -890,7 +890,7 @@ fn sum_v8(
   // Backward compat: sum(KvU64, bigint) -> KvU64
   let operand = match (&old_value, operand, &result_min, &result_max, &clamp) {
     (SumOperand::KvU64(_), SumOperand::BigInt(x), None, None, false)
-      if x >= BigInt::from(0u64) && x <= BigInt::from(std::u64::MAX) =>
+      if x >= BigInt::from(0u64) && x <= BigInt::from(u64::MAX) =>
     {
       SumOperand::KvU64(x.try_into().unwrap())
     }
@@ -905,7 +905,7 @@ fn sum_v8(
           if !clamp {
             return Err(SqliteBackendError::SumOutOfRange);
           }
-          current = result_min.clone();
+          current.clone_from(result_min);
         }
       }
       if let Some(SumOperand::BigInt(result_max)) = &result_max {
@@ -913,7 +913,7 @@ fn sum_v8(
           if !clamp {
             return Err(SqliteBackendError::SumOutOfRange);
           }
-          current = result_max.clone();
+          current.clone_from(result_max);
         }
       }
       Ok(SumOperand::BigInt(current))

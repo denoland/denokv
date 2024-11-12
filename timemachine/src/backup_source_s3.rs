@@ -254,7 +254,7 @@ fn decode_format_version_and_monoseq(
         split.next().ok_or_else(|| anyhow::anyhow!("invalid tsn"))?,
         16,
       )?;
-      if epoch >= std::u32::MAX as u64 || tsn >= std::u32::MAX as u64 {
+      if epoch >= u32::MAX as u64 || tsn >= u32::MAX as u64 {
         anyhow::bail!("invalid epoch or tsn");
       }
       (epoch << 32) | tsn

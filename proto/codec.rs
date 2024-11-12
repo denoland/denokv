@@ -228,7 +228,7 @@ mod double {
 
   fn f64_to_ux_be_bytes(f: f64) -> [u8; 8] {
     let u = if f.is_sign_negative() {
-      f.to_bits() ^ ::std::u64::MAX
+      f.to_bits() ^ u64::MAX
     } else {
       f.to_bits() ^ sign_bit!(u64)
     };
@@ -248,7 +248,7 @@ mod double {
     Ok((
       input,
       f64::from_bits(if (u & sign_bit!(u64)) == 0 {
-        u ^ ::std::u64::MAX
+        u ^ u64::MAX
       } else {
         u ^ sign_bit!(u64)
       }),

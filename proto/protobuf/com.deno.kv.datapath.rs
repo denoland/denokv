@@ -6,9 +6,9 @@
 /// A request to read some data.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SnapshotRead {
-    /// The key ranges to read.
-    #[prost(message, repeated, tag = "1")]
-    pub ranges: ::prost::alloc::vec::Vec<ReadRange>,
+  /// The key ranges to read.
+  #[prost(message, repeated, tag = "1")]
+  pub ranges: ::prost::alloc::vec::Vec<ReadRange>,
 }
 /// The response to a read request.
 ///
@@ -16,352 +16,363 @@ pub struct SnapshotRead {
 /// and output match.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SnapshotReadOutput {
-    /// The read ranges. The ranges are in the same order as the read ranges in the
-    /// request.
-    #[prost(message, repeated, tag = "1")]
-    pub ranges: ::prost::alloc::vec::Vec<ReadRangeOutput>,
-    /// The request failed because this region does not support reading data. This
-    /// is equivalent to status being SR_READ_DISABLED.
-    #[prost(bool, tag = "2")]
-    pub read_disabled: bool,
-    /// Whether the read was strongly consistent.
-    #[prost(bool, tag = "4")]
-    pub read_is_strongly_consistent: bool,
-    /// The status of the read.
-    #[prost(enumeration = "SnapshotReadStatus", tag = "8")]
-    pub status: i32,
+  /// The read ranges. The ranges are in the same order as the read ranges in the
+  /// request.
+  #[prost(message, repeated, tag = "1")]
+  pub ranges: ::prost::alloc::vec::Vec<ReadRangeOutput>,
+  /// The request failed because this region does not support reading data. This
+  /// is equivalent to status being SR_READ_DISABLED.
+  #[prost(bool, tag = "2")]
+  pub read_disabled: bool,
+  /// Whether the read was strongly consistent.
+  #[prost(bool, tag = "4")]
+  pub read_is_strongly_consistent: bool,
+  /// The status of the read.
+  #[prost(enumeration = "SnapshotReadStatus", tag = "8")]
+  pub status: i32,
 }
 /// A key range to read. The range is inclusive of the start and exclusive of the
 /// end.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReadRange {
-    /// The first key to read.
-    #[prost(bytes = "vec", tag = "1")]
-    pub start: ::prost::alloc::vec::Vec<u8>,
-    /// The key after the last key to read.
-    #[prost(bytes = "vec", tag = "2")]
-    pub end: ::prost::alloc::vec::Vec<u8>,
-    /// How many values to read. The backend may return fewer values than this if
-    /// there are not enough values in the range.
-    #[prost(int32, tag = "3")]
-    pub limit: i32,
-    /// If true, the values are returned in reverse order (from end to start). This
-    /// does not change inclusive/exclusive semantics.
-    #[prost(bool, tag = "4")]
-    pub reverse: bool,
+  /// The first key to read.
+  #[prost(bytes = "vec", tag = "1")]
+  pub start: ::prost::alloc::vec::Vec<u8>,
+  /// The key after the last key to read.
+  #[prost(bytes = "vec", tag = "2")]
+  pub end: ::prost::alloc::vec::Vec<u8>,
+  /// How many values to read. The backend may return fewer values than this if
+  /// there are not enough values in the range.
+  #[prost(int32, tag = "3")]
+  pub limit: i32,
+  /// If true, the values are returned in reverse order (from end to start). This
+  /// does not change inclusive/exclusive semantics.
+  #[prost(bool, tag = "4")]
+  pub reverse: bool,
 }
 /// The response to a read range request.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReadRangeOutput {
-    /// The values read in the range. The values are in key order.
-    #[prost(message, repeated, tag = "1")]
-    pub values: ::prost::alloc::vec::Vec<KvEntry>,
+  /// The values read in the range. The values are in key order.
+  #[prost(message, repeated, tag = "1")]
+  pub values: ::prost::alloc::vec::Vec<KvEntry>,
 }
 /// A request to write some data.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AtomicWrite {
-    /// The checks to perform before writing.
-    #[prost(message, repeated, tag = "1")]
-    pub checks: ::prost::alloc::vec::Vec<Check>,
-    /// The mutations to perform.
-    #[prost(message, repeated, tag = "2")]
-    pub mutations: ::prost::alloc::vec::Vec<Mutation>,
-    /// The enqueues to perform.
-    #[prost(message, repeated, tag = "3")]
-    pub enqueues: ::prost::alloc::vec::Vec<Enqueue>,
+  /// The checks to perform before writing.
+  #[prost(message, repeated, tag = "1")]
+  pub checks: ::prost::alloc::vec::Vec<Check>,
+  /// The mutations to perform.
+  #[prost(message, repeated, tag = "2")]
+  pub mutations: ::prost::alloc::vec::Vec<Mutation>,
+  /// The enqueues to perform.
+  #[prost(message, repeated, tag = "3")]
+  pub enqueues: ::prost::alloc::vec::Vec<Enqueue>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AtomicWriteOutput {
-    /// The status of the write.
-    #[prost(enumeration = "AtomicWriteStatus", tag = "1")]
-    pub status: i32,
-    /// The versionstamp of the commit that wrote the data.
-    #[prost(bytes = "vec", tag = "2")]
-    pub versionstamp: ::prost::alloc::vec::Vec<u8>,
-    /// The indexes to checks that failed their check condition.
-    #[prost(uint32, repeated, tag = "4")]
-    pub failed_checks: ::prost::alloc::vec::Vec<u32>,
+  /// The status of the write.
+  #[prost(enumeration = "AtomicWriteStatus", tag = "1")]
+  pub status: i32,
+  /// The versionstamp of the commit that wrote the data.
+  #[prost(bytes = "vec", tag = "2")]
+  pub versionstamp: ::prost::alloc::vec::Vec<u8>,
+  /// The indexes to checks that failed their check condition.
+  #[prost(uint32, repeated, tag = "4")]
+  pub failed_checks: ::prost::alloc::vec::Vec<u32>,
 }
 /// A mutation to perform.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Check {
-    /// The key to check.
-    #[prost(bytes = "vec", tag = "1")]
-    pub key: ::prost::alloc::vec::Vec<u8>,
-    /// The expected versionstamp of the value. If the value does not have this
-    /// versionstamp, the check fails. A 0-length versionstamp means "check that
-    /// the value does not exist".
-    ///
-    /// 10-byte raw versionstamp
-    #[prost(bytes = "vec", tag = "2")]
-    pub versionstamp: ::prost::alloc::vec::Vec<u8>,
+  /// The key to check.
+  #[prost(bytes = "vec", tag = "1")]
+  pub key: ::prost::alloc::vec::Vec<u8>,
+  /// The expected versionstamp of the value. If the value does not have this
+  /// versionstamp, the check fails. A 0-length versionstamp means "check that
+  /// the value does not exist".
+  ///
+  /// 10-byte raw versionstamp
+  #[prost(bytes = "vec", tag = "2")]
+  pub versionstamp: ::prost::alloc::vec::Vec<u8>,
 }
 /// A mutation to perform.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Mutation {
-    /// The key to mutate.
-    #[prost(bytes = "vec", tag = "1")]
-    pub key: ::prost::alloc::vec::Vec<u8>,
-    /// The mutation value. This is ignored for clear mutations.
-    #[prost(message, optional, tag = "2")]
-    pub value: ::core::option::Option<KvValue>,
-    /// The type of mutation to perform.
-    #[prost(enumeration = "MutationType", tag = "3")]
-    pub mutation_type: i32,
-    /// An expiry time for the value, in milliseconds since the Unix epoch (UTC).
-    /// If this is set to 0, the value will never expire.
-    #[prost(int64, tag = "4")]
-    pub expire_at_ms: i64,
-    /// A V8-encoded value that represents the minimum allowed value of the result
-    /// of a `sum` operation. Only valid if `mutation_type` is `M_SUM` and
-    /// `value.encoding` is `VE_V8`.
-    #[prost(bytes = "vec", tag = "5")]
-    pub sum_min: ::prost::alloc::vec::Vec<u8>,
-    /// A V8-encoded value that represents the maximum allowed value of the result
-    /// of a `sum` operation. Only valid if `mutation_type` is `M_SUM` and
-    /// `value.encoding` is `VE_V8`.
-    #[prost(bytes = "vec", tag = "6")]
-    pub sum_max: ::prost::alloc::vec::Vec<u8>,
-    /// If true, a result outside sum_min..=sum_max will be clamped. Otherwise, an
-    /// error is returned and the atomic operation is not applied. Only valid if
-    /// `mutation_type` is `M_SUM` and `value.encoding` is `VE_V8`.
-    #[prost(bool, tag = "7")]
-    pub sum_clamp: bool,
+  /// The key to mutate.
+  #[prost(bytes = "vec", tag = "1")]
+  pub key: ::prost::alloc::vec::Vec<u8>,
+  /// The mutation value. This is ignored for clear mutations.
+  #[prost(message, optional, tag = "2")]
+  pub value: ::core::option::Option<KvValue>,
+  /// The type of mutation to perform.
+  #[prost(enumeration = "MutationType", tag = "3")]
+  pub mutation_type: i32,
+  /// An expiry time for the value, in milliseconds since the Unix epoch (UTC).
+  /// If this is set to 0, the value will never expire.
+  #[prost(int64, tag = "4")]
+  pub expire_at_ms: i64,
+  /// A V8-encoded value that represents the minimum allowed value of the result
+  /// of a `sum` operation. Only valid if `mutation_type` is `M_SUM` and
+  /// `value.encoding` is `VE_V8`.
+  #[prost(bytes = "vec", tag = "5")]
+  pub sum_min: ::prost::alloc::vec::Vec<u8>,
+  /// A V8-encoded value that represents the maximum allowed value of the result
+  /// of a `sum` operation. Only valid if `mutation_type` is `M_SUM` and
+  /// `value.encoding` is `VE_V8`.
+  #[prost(bytes = "vec", tag = "6")]
+  pub sum_max: ::prost::alloc::vec::Vec<u8>,
+  /// If true, a result outside sum_min..=sum_max will be clamped. Otherwise, an
+  /// error is returned and the atomic operation is not applied. Only valid if
+  /// `mutation_type` is `M_SUM` and `value.encoding` is `VE_V8`.
+  #[prost(bool, tag = "7")]
+  pub sum_clamp: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KvValue {
-    #[prost(bytes = "vec", tag = "1")]
-    pub data: ::prost::alloc::vec::Vec<u8>,
-    #[prost(enumeration = "ValueEncoding", tag = "2")]
-    pub encoding: i32,
+  #[prost(bytes = "vec", tag = "1")]
+  pub data: ::prost::alloc::vec::Vec<u8>,
+  #[prost(enumeration = "ValueEncoding", tag = "2")]
+  pub encoding: i32,
 }
 /// A key-value entry.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KvEntry {
-    /// The key.
-    #[prost(bytes = "vec", tag = "1")]
-    pub key: ::prost::alloc::vec::Vec<u8>,
-    /// The encoded value bytes.
-    #[prost(bytes = "vec", tag = "2")]
-    pub value: ::prost::alloc::vec::Vec<u8>,
-    /// The encoding of the value.
-    #[prost(enumeration = "ValueEncoding", tag = "3")]
-    pub encoding: i32,
-    /// The versionstamp of the commit that last wrote this value.
-    #[prost(bytes = "vec", tag = "4")]
-    pub versionstamp: ::prost::alloc::vec::Vec<u8>,
+  /// The key.
+  #[prost(bytes = "vec", tag = "1")]
+  pub key: ::prost::alloc::vec::Vec<u8>,
+  /// The encoded value bytes.
+  #[prost(bytes = "vec", tag = "2")]
+  pub value: ::prost::alloc::vec::Vec<u8>,
+  /// The encoding of the value.
+  #[prost(enumeration = "ValueEncoding", tag = "3")]
+  pub encoding: i32,
+  /// The versionstamp of the commit that last wrote this value.
+  #[prost(bytes = "vec", tag = "4")]
+  pub versionstamp: ::prost::alloc::vec::Vec<u8>,
 }
 /// A request to enqueue a message.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Enqueue {
-    /// The payload of the message, encoded as a V8 ValueSerializer value.
-    #[prost(bytes = "vec", tag = "1")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
-    /// The time at which the message should be delivered, in milliseconds since
-    /// the Unix epoch (UTC). If the deadline is in the past, the message will be
-    /// scheduled for delivered immediately.
-    #[prost(int64, tag = "2")]
-    pub deadline_ms: i64,
-    /// The keys to write the value to if the maximum number of re-deliveries
-    /// according to the backoff schedule has been reached.
-    #[prost(bytes = "vec", repeated, tag = "3")]
-    pub keys_if_undelivered: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
-    /// The backoff schedule to use if delivery fails. This is a list of delays in
-    /// milliseconds. The first delay is the delay before the first retry, the
-    /// second delay is the delay before the second retry, and so on. If the list
-    /// is empty, the message will not be retried.
-    #[prost(uint32, repeated, tag = "4")]
-    pub backoff_schedule: ::prost::alloc::vec::Vec<u32>,
+  /// The payload of the message, encoded as a V8 ValueSerializer value.
+  #[prost(bytes = "vec", tag = "1")]
+  pub payload: ::prost::alloc::vec::Vec<u8>,
+  /// The time at which the message should be delivered, in milliseconds since
+  /// the Unix epoch (UTC). If the deadline is in the past, the message will be
+  /// scheduled for delivered immediately.
+  #[prost(int64, tag = "2")]
+  pub deadline_ms: i64,
+  /// The keys to write the value to if the maximum number of re-deliveries
+  /// according to the backoff schedule has been reached.
+  #[prost(bytes = "vec", repeated, tag = "3")]
+  pub keys_if_undelivered:
+    ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+  /// The backoff schedule to use if delivery fails. This is a list of delays in
+  /// milliseconds. The first delay is the delay before the first retry, the
+  /// second delay is the delay before the second retry, and so on. If the list
+  /// is empty, the message will not be retried.
+  #[prost(uint32, repeated, tag = "4")]
+  pub backoff_schedule: ::prost::alloc::vec::Vec<u32>,
 }
 /// A request to watch some keys for updates.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Watch {
-    /// The keys to watch.
-    #[prost(message, repeated, tag = "1")]
-    pub keys: ::prost::alloc::vec::Vec<WatchKey>,
+  /// The keys to watch.
+  #[prost(message, repeated, tag = "1")]
+  pub keys: ::prost::alloc::vec::Vec<WatchKey>,
 }
 /// The response to a watch request.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WatchOutput {
-    /// The status of the watch.
-    #[prost(enumeration = "SnapshotReadStatus", tag = "1")]
-    pub status: i32,
-    /// For each watched key, whether the value changed since the last watch
-    /// request, and if so, the new value.
-    #[prost(message, repeated, tag = "2")]
-    pub keys: ::prost::alloc::vec::Vec<WatchKeyOutput>,
+  /// The status of the watch.
+  #[prost(enumeration = "SnapshotReadStatus", tag = "1")]
+  pub status: i32,
+  /// For each watched key, whether the value changed since the last watch
+  /// request, and if so, the new value.
+  #[prost(message, repeated, tag = "2")]
+  pub keys: ::prost::alloc::vec::Vec<WatchKeyOutput>,
 }
 /// A key to watch.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WatchKey {
-    /// The key to watch.
-    #[prost(bytes = "vec", tag = "1")]
-    pub key: ::prost::alloc::vec::Vec<u8>,
+  /// The key to watch.
+  #[prost(bytes = "vec", tag = "1")]
+  pub key: ::prost::alloc::vec::Vec<u8>,
 }
 /// The response to a watch request for a single key.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WatchKeyOutput {
-    /// Whether the value changed since the last watch delivery.
-    #[prost(bool, tag = "1")]
-    pub changed: bool,
-    /// The new value, if changed is true.
-    #[prost(message, optional, tag = "2")]
-    pub entry_if_changed: ::core::option::Option<KvEntry>,
+  /// Whether the value changed since the last watch delivery.
+  #[prost(bool, tag = "1")]
+  pub changed: bool,
+  /// The new value, if changed is true.
+  #[prost(message, optional, tag = "2")]
+  pub entry_if_changed: ::core::option::Option<KvEntry>,
 }
 /// The status of a read request.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+  Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum SnapshotReadStatus {
-    /// The read status is unspecified or unknown.
-    SrUnspecified = 0,
-    /// The read succeeded.
-    SrSuccess = 1,
-    /// The read failed because the region is unable to serve reads right now.
-    SrReadDisabled = 2,
+  /// The read status is unspecified or unknown.
+  SrUnspecified = 0,
+  /// The read succeeded.
+  SrSuccess = 1,
+  /// The read failed because the region is unable to serve reads right now.
+  SrReadDisabled = 2,
 }
 impl SnapshotReadStatus {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::SrUnspecified => "SR_UNSPECIFIED",
-            Self::SrSuccess => "SR_SUCCESS",
-            Self::SrReadDisabled => "SR_READ_DISABLED",
-        }
+  /// String value of the enum field names used in the ProtoBuf definition.
+  ///
+  /// The values are not transformed in any way and thus are considered stable
+  /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+  pub fn as_str_name(&self) -> &'static str {
+    match self {
+      Self::SrUnspecified => "SR_UNSPECIFIED",
+      Self::SrSuccess => "SR_SUCCESS",
+      Self::SrReadDisabled => "SR_READ_DISABLED",
     }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "SR_UNSPECIFIED" => Some(Self::SrUnspecified),
-            "SR_SUCCESS" => Some(Self::SrSuccess),
-            "SR_READ_DISABLED" => Some(Self::SrReadDisabled),
-            _ => None,
-        }
+  }
+  /// Creates an enum from field names used in the ProtoBuf definition.
+  pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+    match value {
+      "SR_UNSPECIFIED" => Some(Self::SrUnspecified),
+      "SR_SUCCESS" => Some(Self::SrSuccess),
+      "SR_READ_DISABLED" => Some(Self::SrReadDisabled),
+      _ => None,
     }
+  }
 }
 /// The type of a mutation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+  Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum MutationType {
-    /// The mutation type is unspecified or unknown.
-    MUnspecified = 0,
-    /// Set the value.
-    MSet = 1,
-    /// Delete the value.
-    MDelete = 2,
-    /// Sum the stored value with the new value. Both values must be LE64 encoded.
-    MSum = 3,
-    /// Min the stored value with the new value. Both values must be LE64 encoded.
-    MMax = 4,
-    /// Max the stored value with the new value. Both values must be LE64 encoded.
-    MMin = 5,
-    /// Set the value, with the versionstamp appended to the end of the key as a string.
-    MSetSuffixVersionstampedKey = 9,
+  /// The mutation type is unspecified or unknown.
+  MUnspecified = 0,
+  /// Set the value.
+  MSet = 1,
+  /// Delete the value.
+  MDelete = 2,
+  /// Sum the stored value with the new value. Both values must be LE64 encoded.
+  MSum = 3,
+  /// Min the stored value with the new value. Both values must be LE64 encoded.
+  MMax = 4,
+  /// Max the stored value with the new value. Both values must be LE64 encoded.
+  MMin = 5,
+  /// Set the value, with the versionstamp appended to the end of the key as a string.
+  MSetSuffixVersionstampedKey = 9,
 }
 impl MutationType {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::MUnspecified => "M_UNSPECIFIED",
-            Self::MSet => "M_SET",
-            Self::MDelete => "M_DELETE",
-            Self::MSum => "M_SUM",
-            Self::MMax => "M_MAX",
-            Self::MMin => "M_MIN",
-            Self::MSetSuffixVersionstampedKey => "M_SET_SUFFIX_VERSIONSTAMPED_KEY",
-        }
+  /// String value of the enum field names used in the ProtoBuf definition.
+  ///
+  /// The values are not transformed in any way and thus are considered stable
+  /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+  pub fn as_str_name(&self) -> &'static str {
+    match self {
+      Self::MUnspecified => "M_UNSPECIFIED",
+      Self::MSet => "M_SET",
+      Self::MDelete => "M_DELETE",
+      Self::MSum => "M_SUM",
+      Self::MMax => "M_MAX",
+      Self::MMin => "M_MIN",
+      Self::MSetSuffixVersionstampedKey => "M_SET_SUFFIX_VERSIONSTAMPED_KEY",
     }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "M_UNSPECIFIED" => Some(Self::MUnspecified),
-            "M_SET" => Some(Self::MSet),
-            "M_DELETE" => Some(Self::MDelete),
-            "M_SUM" => Some(Self::MSum),
-            "M_MAX" => Some(Self::MMax),
-            "M_MIN" => Some(Self::MMin),
-            "M_SET_SUFFIX_VERSIONSTAMPED_KEY" => Some(Self::MSetSuffixVersionstampedKey),
-            _ => None,
-        }
+  }
+  /// Creates an enum from field names used in the ProtoBuf definition.
+  pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+    match value {
+      "M_UNSPECIFIED" => Some(Self::MUnspecified),
+      "M_SET" => Some(Self::MSet),
+      "M_DELETE" => Some(Self::MDelete),
+      "M_SUM" => Some(Self::MSum),
+      "M_MAX" => Some(Self::MMax),
+      "M_MIN" => Some(Self::MMin),
+      "M_SET_SUFFIX_VERSIONSTAMPED_KEY" => {
+        Some(Self::MSetSuffixVersionstampedKey)
+      }
+      _ => None,
     }
+  }
 }
 /// The encoding of a value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+  Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum ValueEncoding {
-    /// The encoding is unspecified or unknown.
-    VeUnspecified = 0,
-    /// The value is encoded using V8 ValueSerializer encoding.
-    VeV8 = 1,
-    /// The value is encoded using little-endian 64-bit integer encoding.
-    VeLe64 = 2,
-    /// The value is a literal byte array.
-    VeBytes = 3,
+  /// The encoding is unspecified or unknown.
+  VeUnspecified = 0,
+  /// The value is encoded using V8 ValueSerializer encoding.
+  VeV8 = 1,
+  /// The value is encoded using little-endian 64-bit integer encoding.
+  VeLe64 = 2,
+  /// The value is a literal byte array.
+  VeBytes = 3,
 }
 impl ValueEncoding {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::VeUnspecified => "VE_UNSPECIFIED",
-            Self::VeV8 => "VE_V8",
-            Self::VeLe64 => "VE_LE64",
-            Self::VeBytes => "VE_BYTES",
-        }
+  /// String value of the enum field names used in the ProtoBuf definition.
+  ///
+  /// The values are not transformed in any way and thus are considered stable
+  /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+  pub fn as_str_name(&self) -> &'static str {
+    match self {
+      Self::VeUnspecified => "VE_UNSPECIFIED",
+      Self::VeV8 => "VE_V8",
+      Self::VeLe64 => "VE_LE64",
+      Self::VeBytes => "VE_BYTES",
     }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "VE_UNSPECIFIED" => Some(Self::VeUnspecified),
-            "VE_V8" => Some(Self::VeV8),
-            "VE_LE64" => Some(Self::VeLe64),
-            "VE_BYTES" => Some(Self::VeBytes),
-            _ => None,
-        }
+  }
+  /// Creates an enum from field names used in the ProtoBuf definition.
+  pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+    match value {
+      "VE_UNSPECIFIED" => Some(Self::VeUnspecified),
+      "VE_V8" => Some(Self::VeV8),
+      "VE_LE64" => Some(Self::VeLe64),
+      "VE_BYTES" => Some(Self::VeBytes),
+      _ => None,
     }
+  }
 }
 /// The status of an atomic write.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+  Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum AtomicWriteStatus {
-    /// The write failed, but the exact status is unspecified or unknown. The
-    /// request should not be retried.
-    AwUnspecified = 0,
-    /// The write succeeded.
-    AwSuccess = 1,
-    /// The write failed because a check failed.
-    AwCheckFailure = 2,
-    /// The write failed because the region is unable to serve writes right now.
-    AwWriteDisabled = 5,
+  /// The write failed, but the exact status is unspecified or unknown. The
+  /// request should not be retried.
+  AwUnspecified = 0,
+  /// The write succeeded.
+  AwSuccess = 1,
+  /// The write failed because a check failed.
+  AwCheckFailure = 2,
+  /// The write failed because the region is unable to serve writes right now.
+  AwWriteDisabled = 5,
 }
 impl AtomicWriteStatus {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::AwUnspecified => "AW_UNSPECIFIED",
-            Self::AwSuccess => "AW_SUCCESS",
-            Self::AwCheckFailure => "AW_CHECK_FAILURE",
-            Self::AwWriteDisabled => "AW_WRITE_DISABLED",
-        }
+  /// String value of the enum field names used in the ProtoBuf definition.
+  ///
+  /// The values are not transformed in any way and thus are considered stable
+  /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+  pub fn as_str_name(&self) -> &'static str {
+    match self {
+      Self::AwUnspecified => "AW_UNSPECIFIED",
+      Self::AwSuccess => "AW_SUCCESS",
+      Self::AwCheckFailure => "AW_CHECK_FAILURE",
+      Self::AwWriteDisabled => "AW_WRITE_DISABLED",
     }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "AW_UNSPECIFIED" => Some(Self::AwUnspecified),
-            "AW_SUCCESS" => Some(Self::AwSuccess),
-            "AW_CHECK_FAILURE" => Some(Self::AwCheckFailure),
-            "AW_WRITE_DISABLED" => Some(Self::AwWriteDisabled),
-            _ => None,
-        }
+  }
+  /// Creates an enum from field names used in the ProtoBuf definition.
+  pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+    match value {
+      "AW_UNSPECIFIED" => Some(Self::AwUnspecified),
+      "AW_SUCCESS" => Some(Self::AwSuccess),
+      "AW_CHECK_FAILURE" => Some(Self::AwCheckFailure),
+      "AW_WRITE_DISABLED" => Some(Self::AwWriteDisabled),
+      _ => None,
     }
+  }
 }

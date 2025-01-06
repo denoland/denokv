@@ -57,13 +57,11 @@ impl RemoteTransport for ReqwestClient {
 
 impl RemoteResponse for ReqwestResponse {
   async fn bytes(self) -> Result<Bytes, JsErrorBox> {
-    Ok(
-      self
-        .0
-        .bytes()
-        .await
-        .map_err(|e| JsErrorBox::generic(e.to_string()))?,
-    )
+    self
+      .0
+      .bytes()
+      .await
+      .map_err(|e| JsErrorBox::generic(e.to_string()))
   }
   fn stream(
     self,
@@ -74,13 +72,11 @@ impl RemoteResponse for ReqwestResponse {
       .map_err(|e| JsErrorBox::generic(e.to_string()))
   }
   async fn text(self) -> Result<String, JsErrorBox> {
-    Ok(
-      self
-        .0
-        .text()
-        .await
-        .map_err(|e| JsErrorBox::generic(e.to_string()))?,
-    )
+    self
+      .0
+      .text()
+      .await
+      .map_err(|e| JsErrorBox::generic(e.to_string()))
   }
 }
 

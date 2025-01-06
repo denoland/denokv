@@ -8,7 +8,7 @@ use std::pin::Pin;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
-use deno_error::{JsErrorBox};
+use deno_error::JsErrorBox;
 use futures::Stream;
 use num_bigint::BigInt;
 use serde::Deserialize;
@@ -35,9 +35,8 @@ pub trait Database: Clone + Sized {
     write: AtomicWrite,
   ) -> Result<Option<CommitResult>, JsErrorBox>;
 
-  async fn dequeue_next_message(
-    &self,
-  ) -> Result<Option<Self::QMH>, JsErrorBox>;
+  async fn dequeue_next_message(&self)
+    -> Result<Option<Self::QMH>, JsErrorBox>;
 
   fn watch(&self, keys: Vec<Vec<u8>>) -> WatchStream;
 

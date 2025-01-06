@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::DateTime;
 use chrono::Utc;
-use deno_error::{JsError};
-use deno_error::{JsErrorBox};
+use deno_error::JsError;
+use deno_error::JsErrorBox;
 use denokv_proto::decode_value;
 use denokv_proto::AtomicWrite;
 use denokv_proto::CommitResult;
@@ -284,7 +284,10 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
       };
 
       let url = Url::parse(&format!("{}/{}", endpoint.url, method))?;
-      self.permissions.check_net_url(&url).map_err(CallRawError::Permission)?;
+      self
+        .permissions
+        .check_net_url(&url)
+        .map_err(CallRawError::Permission)?;
 
       let req = self
         .client
@@ -336,7 +339,10 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
     ),
     JsErrorBox,
   > {
-    let (resp, version) = self.call_raw(method, req).await.map_err(JsErrorBox::from_err)?;
+    let (resp, version) = self
+      .call_raw(method, req)
+      .await
+      .map_err(JsErrorBox::from_err)?;
     let stream = resp
       .stream()
       .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
@@ -644,8 +650,10 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
       .collect();
     let req = pb::SnapshotRead { ranges };
 
-    let (res, version): (pb::SnapshotReadOutput, _) =
-      self.call_data("snapshot_read", req).await.map_err(|e| JsErrorBox::from_err(SnapshotReadError::CallData(e)))?;
+    let (res, version): (pb::SnapshotReadOutput, _) = self
+      .call_data("snapshot_read", req)
+      .await
+      .map_err(|e| JsErrorBox::from_err(SnapshotReadError::CallData(e)))?;
 
     match version {
       ProtocolVersion::V1 | ProtocolVersion::V2 => {
@@ -661,7 +669,9 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
           return Err(JsErrorBox::from_err(SnapshotReadError::ReadsDisabled));
         }
         pb::SnapshotReadStatus::SrUnspecified => {
-          return Err(JsErrorBox::from_err(SnapshotReadError::UnspecifiedRead(res.status)));
+          return Err(JsErrorBox::from_err(
+            SnapshotReadError::UnspecifiedRead(res.status),
+          ));
         }
       },
     }
@@ -670,7 +680,9 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
       && options.consistency == Consistency::Strong
     {
       // TODO: this should result in a retry after a forced metadata refresh.
-      return Err(JsErrorBox::from_err(SnapshotReadError::StrongConsistencyReadsUnavailable));
+      return Err(JsErrorBox::from_err(
+        SnapshotReadError::StrongConsistencyReadsUnavailable,
+      ));
     }
 
     let ranges = res
@@ -687,13 +699,15 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
                 value: decode_value(e.value, e.encoding as i64).ok_or_else(
                   || SnapshotReadError::UnknownEncoding(e.encoding),
                 )?,
-                versionstamp: <[u8; 10]>::try_from(&e.versionstamp[..]).map_err(|e| SnapshotReadError::TryFromSlice(e))?,
+                versionstamp: <[u8; 10]>::try_from(&e.versionstamp[..])
+                  .map_err(|e| SnapshotReadError::TryFromSlice(e))?,
               })
             })
             .collect::<Result<_, SnapshotReadError>>()?,
         })
       })
-      .collect::<Result<_, SnapshotReadError>>().map_err(JsErrorBox::from_err)?;
+      .collect::<Result<_, SnapshotReadError>>()
+      .map_err(JsErrorBox::from_err)?;
 
     Ok(ranges)
   }
@@ -703,7 +717,9 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
     write: AtomicWrite,
   ) -> Result<Option<CommitResult>, JsErrorBox> {
     if !write.enqueues.is_empty() {
-      return Err(JsErrorBox::from_err(AtomicWriteError::EnqueueOperationsUnsupported));
+      return Err(JsErrorBox::from_err(
+        AtomicWriteError::EnqueueOperationsUnsupported,
+      ));
     }
 
     let mut checks = Vec::new();
@@ -803,12 +819,16 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
       enqueues: Vec::new(),
     };
 
-    let (res, _): (pb::AtomicWriteOutput, _) =
-      self.call_data("atomic_write", req).await.map_err(|e| JsErrorBox::from_err(AtomicWriteError::CallData(e)))?;
+    let (res, _): (pb::AtomicWriteOutput, _) = self
+      .call_data("atomic_write", req)
+      .await
+      .map_err(|e| JsErrorBox::from_err(AtomicWriteError::CallData(e)))?;
 
     match res.status() {
       pb::AtomicWriteStatus::AwSuccess => Ok(Some(CommitResult {
-        versionstamp: <[u8; 10]>::try_from(&res.versionstamp[..]).map_err(|e| JsErrorBox::from_err(AtomicWriteError::TryFromSlice(e)))?,
+        versionstamp: <[u8; 10]>::try_from(&res.versionstamp[..]).map_err(
+          |e| JsErrorBox::from_err(AtomicWriteError::TryFromSlice(e)),
+        )?,
       })),
       pb::AtomicWriteStatus::AwCheckFailure => Ok(None),
       pb::AtomicWriteStatus::AwWriteDisabled => {
@@ -830,8 +850,7 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
   fn watch(
     &self,
     keys: Vec<Vec<u8>>,
-  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>>>>
-  {
+  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>>>> {
     let this = self.clone();
     let stream = try_stream! {
       let mut attempt = 0;

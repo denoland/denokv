@@ -41,7 +41,14 @@ impl RemoteTransport for ReqwestClient {
     headers: http::HeaderMap,
     body: Bytes,
   ) -> Result<(Url, http::StatusCode, Self::Response), JsErrorBox> {
-    let res = self.0.post(url).headers(headers).body(body).send().await.map_err(|e| JsErrorBox::generic(e.to_string()))?;
+    let res = self
+      .0
+      .post(url)
+      .headers(headers)
+      .body(body)
+      .send()
+      .await
+      .map_err(|e| JsErrorBox::generic(e.to_string()))?;
     let url = res.url().clone();
     let status = res.status();
     Ok((url, status, ReqwestResponse(res)))
@@ -50,15 +57,30 @@ impl RemoteTransport for ReqwestClient {
 
 impl RemoteResponse for ReqwestResponse {
   async fn bytes(self) -> Result<Bytes, JsErrorBox> {
-    Ok(self.0.bytes().await.map_err(|e| JsErrorBox::generic(e.to_string()))?)
+    Ok(
+      self
+        .0
+        .bytes()
+        .await
+        .map_err(|e| JsErrorBox::generic(e.to_string()))?,
+    )
   }
   fn stream(
     self,
   ) -> impl Stream<Item = Result<Bytes, JsErrorBox>> + Send + Sync {
-    self.0.bytes_stream().map_err(|e| JsErrorBox::generic(e.to_string()))
+    self
+      .0
+      .bytes_stream()
+      .map_err(|e| JsErrorBox::generic(e.to_string()))
   }
   async fn text(self) -> Result<String, JsErrorBox> {
-    Ok(self.0.text().await.map_err(|e| JsErrorBox::generic(e.to_string()))?)
+    Ok(
+      self
+        .0
+        .text()
+        .await
+        .map_err(|e| JsErrorBox::generic(e.to_string()))?,
+    )
   }
 }
 

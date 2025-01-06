@@ -26,7 +26,7 @@ pub use crate::backend::SqliteBackendError;
 use async_stream::try_stream;
 use chrono::DateTime;
 use chrono::Utc;
-use deno_error::{JsErrorBox};
+use deno_error::JsErrorBox;
 use denokv_proto::AtomicWrite;
 use denokv_proto::CommitResult;
 use denokv_proto::Database;
@@ -218,10 +218,10 @@ pub enum SqliteCreateError {
 
 impl Sqlite {
   pub fn new(
-    mut conn_gen: impl FnMut() -> Result<(
-      rusqlite::Connection,
-      Box<dyn RngCore + Send>,
-    ), JsErrorBox>,
+    mut conn_gen: impl FnMut() -> Result<
+      (rusqlite::Connection, Box<dyn RngCore + Send>),
+      JsErrorBox,
+    >,
     notifier: SqliteNotifier,
     config: SqliteConfig,
   ) -> Result<Sqlite, SqliteCreateError> {
@@ -229,7 +229,7 @@ impl Sqlite {
     let batch_timeout = config.batch_timeout;
 
     if config.num_workers == 0 {
-     return Err(SqliteCreateError::NumWorkersTooSmall);
+      return Err(SqliteCreateError::NumWorkersTooSmall);
     }
 
     let mut write_worker: Option<SqliteWorker> = None;
@@ -546,9 +546,8 @@ impl Sqlite {
   pub fn watch(
     &self,
     keys: Vec<Vec<u8>>,
-  ) -> Pin<
-    Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>> + Send>,
-  > {
+  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>> + Send>>
+  {
     let requests = keys
       .iter()
       .map(|key| ReadRange {
@@ -632,7 +631,9 @@ impl Database for Sqlite {
     requests: Vec<ReadRange>,
     options: SnapshotReadOptions,
   ) -> Result<Vec<ReadRangeOutput>, JsErrorBox> {
-    let ranges = Sqlite::snapshot_read(self, requests, options).await.map_err(JsErrorBox::from_err)?;
+    let ranges = Sqlite::snapshot_read(self, requests, options)
+      .await
+      .map_err(JsErrorBox::from_err)?;
     Ok(ranges)
   }
 
@@ -640,22 +641,25 @@ impl Database for Sqlite {
     &self,
     write: AtomicWrite,
   ) -> Result<Option<CommitResult>, JsErrorBox> {
-    let res = Sqlite::atomic_write(self, write).await.map_err(JsErrorBox::from_err)?;
+    let res = Sqlite::atomic_write(self, write)
+      .await
+      .map_err(JsErrorBox::from_err)?;
     Ok(res)
   }
 
   async fn dequeue_next_message(
     &self,
   ) -> Result<Option<Self::QMH>, JsErrorBox> {
-    let message_handle = Sqlite::dequeue_next_message(self).await.map_err(JsErrorBox::from_err)?;
+    let message_handle = Sqlite::dequeue_next_message(self)
+      .await
+      .map_err(JsErrorBox::from_err)?;
     Ok(message_handle)
   }
 
   fn watch(
     &self,
     keys: Vec<Vec<u8>>,
-  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>>>>
-  {
+  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>>>> {
     Sqlite::watch(self, keys)
   }
 
@@ -695,12 +699,16 @@ impl SqliteMessageHandle {
 #[async_trait::async_trait(?Send)]
 impl QueueMessageHandle for SqliteMessageHandle {
   async fn finish(&self, success: bool) -> Result<(), JsErrorBox> {
-    SqliteMessageHandle::finish(self, success).await.map_err(JsErrorBox::from_err)?;
+    SqliteMessageHandle::finish(self, success)
+      .await
+      .map_err(JsErrorBox::from_err)?;
     Ok(())
   }
 
   async fn take_payload(&mut self) -> Result<Vec<u8>, JsErrorBox> {
-    let payload = SqliteMessageHandle::take_payload(self).await.map_err(JsErrorBox::from_err)?;
+    let payload = SqliteMessageHandle::take_payload(self)
+      .await
+      .map_err(JsErrorBox::from_err)?;
     Ok(payload)
   }
 }

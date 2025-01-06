@@ -348,9 +348,8 @@ fn open_sqlite(
   let sqlite = Sqlite::new(
     || {
       Ok((
-        Connection::open_with_flags(path, flags).map_err(|e| {
-          deno_error::JsErrorBox::generic(e.to_string())
-        })?,
+        Connection::open_with_flags(path, flags)
+          .map_err(|e| deno_error::JsErrorBox::generic(e.to_string()))?,
         Box::new(rand::rngs::StdRng::from_entropy()),
       ))
     },

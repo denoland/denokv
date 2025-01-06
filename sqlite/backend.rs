@@ -313,7 +313,7 @@ impl SqliteBackend {
           .map(|_| {
             Err(e.take().unwrap_or_else(|| {
               SqliteBackendError::GenericError(JsErrorBox::generic(
-                "batch transaction failed"
+                "batch transaction failed",
               ))
             }))
           })

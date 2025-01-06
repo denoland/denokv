@@ -700,7 +700,7 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
                   || SnapshotReadError::UnknownEncoding(e.encoding),
                 )?,
                 versionstamp: <[u8; 10]>::try_from(&e.versionstamp[..])
-                  .map_err(|e| SnapshotReadError::TryFromSlice(e))?,
+                  .map_err(SnapshotReadError::TryFromSlice)?,
               })
             })
             .collect::<Result<_, SnapshotReadError>>()?,

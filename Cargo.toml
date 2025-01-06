@@ -53,4 +53,4 @@ uuid = { version = "1.4.1", features = ["v4", "serde"] }
 v8_valueserializer = "0.1.1"
 
 [patch.crates-io]
-deno_error = { path = "../deno_error" }
+deno_error = { git = "https://github.com/denoland/deno_error.git", branch = "changes" }

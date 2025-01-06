@@ -773,18 +773,19 @@ dependencies = [
 [[package]]
 name = "deno_error"
 version = "0.5.2"
+source = "git+https://github.com/denoland/deno_error.git?branch=changes#3f2e4efeecce782251b7347a5ebb0ed21b02e661"
 dependencies = [
  "deno_error_macro",
  "libc",
  "serde",
  "serde_json",
- "thiserror 2.0.8",
  "url",
 ]
 
 [[package]]
 name = "deno_error_macro"
 version = "0.5.2"
+source = "git+https://github.com/denoland/deno_error.git?branch=changes#3f2e4efeecce782251b7347a5ebb0ed21b02e661"
 dependencies = [
  "proc-macro2",
  "quote",

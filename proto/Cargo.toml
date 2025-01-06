@@ -14,7 +14,6 @@ path = "lib.rs"
 build_protos = ["prost-build"]
 
 [dependencies]
-anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 futures.workspace = true
@@ -22,6 +21,7 @@ num-bigint.workspace = true
 prost.workspace = true
 serde.workspace = true
 uuid.workspace = true
+deno_error.workspace = true
 
 [build-dependencies]
 prost-build = { workspace = true, optional = true }

@@ -26,6 +26,7 @@ pub use crate::backend::SqliteBackendError;
 use async_stream::try_stream;
 use chrono::DateTime;
 use chrono::Utc;
+use deno_error::{JsErrorBox};
 use denokv_proto::AtomicWrite;
 use denokv_proto::CommitResult;
 use denokv_proto::Database;
@@ -202,20 +203,33 @@ pub struct SqliteConfig {
   pub batch_timeout: Option<Duration>,
 }
 
+#[derive(Debug, thiserror::Error, deno_error::JsError)]
+pub enum SqliteCreateError {
+  #[class(type)]
+  #[error("num_workers must be at least 1")]
+  NumWorkersTooSmall,
+  #[class(inherit)]
+  #[error(transparent)]
+  SqliteBackend(#[from] SqliteBackendError),
+  #[class(inherit)]
+  #[error(transparent)]
+  Other(#[from] JsErrorBox),
+}
+
 impl Sqlite {
   pub fn new(
-    mut conn_gen: impl FnMut() -> anyhow::Result<(
+    mut conn_gen: impl FnMut() -> Result<(
       rusqlite::Connection,
       Box<dyn RngCore + Send>,
-    )>,
+    ), JsErrorBox>,
     notifier: SqliteNotifier,
     config: SqliteConfig,
-  ) -> Result<Sqlite, anyhow::Error> {
+  ) -> Result<Sqlite, SqliteCreateError> {
     let shutdown_notify = Arc::new(Notify::new());
     let batch_timeout = config.batch_timeout;
 
     if config.num_workers == 0 {
-      anyhow::bail!("num_workers must be at least 1")
+     return Err(SqliteCreateError::NumWorkersTooSmall);
     }
 
     let mut write_worker: Option<SqliteWorker> = None;
@@ -533,7 +547,7 @@ impl Sqlite {
     &self,
     keys: Vec<Vec<u8>>,
   ) -> Pin<
-    Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, anyhow::Error>> + Send>,
+    Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>> + Send>,
   > {
     let requests = keys
       .iter()
@@ -571,7 +585,7 @@ impl Sqlite {
         let Some(res) = receiver.await.ok() else {
           return; // database is closing
         };
-        let (ranges, current_versionstamp) = res?;
+        let (ranges, current_versionstamp) = res.map_err(JsErrorBox::from_err)?;
         let mut outputs = Vec::new();
         for range in ranges {
           let entry = range.entries.into_iter().next();
@@ -617,30 +631,30 @@ impl Database for Sqlite {
     &self,
     requests: Vec<ReadRange>,
     options: SnapshotReadOptions,
-  ) -> Result<Vec<ReadRangeOutput>, anyhow::Error> {
-    let ranges = Sqlite::snapshot_read(self, requests, options).await?;
+  ) -> Result<Vec<ReadRangeOutput>, JsErrorBox> {
+    let ranges = Sqlite::snapshot_read(self, requests, options).await.map_err(JsErrorBox::from_err)?;
     Ok(ranges)
   }
 
   async fn atomic_write(
     &self,
     write: AtomicWrite,
-  ) -> Result<Option<CommitResult>, anyhow::Error> {
-    let res = Sqlite::atomic_write(self, write).await?;
+  ) -> Result<Option<CommitResult>, JsErrorBox> {
+    let res = Sqlite::atomic_write(self, write).await.map_err(JsErrorBox::from_err)?;
     Ok(res)
   }
 
   async fn dequeue_next_message(
     &self,
-  ) -> Result<Option<Self::QMH>, anyhow::Error> {
-    let message_handle = Sqlite::dequeue_next_message(self).await?;
+  ) -> Result<Option<Self::QMH>, JsErrorBox> {
+    let message_handle = Sqlite::dequeue_next_message(self).await.map_err(JsErrorBox::from_err)?;
     Ok(message_handle)
   }
 
   fn watch(
     &self,
     keys: Vec<Vec<u8>>,
-  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, anyhow::Error>>>>
+  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>>>>
   {
     Sqlite::watch(self, keys)
   }
@@ -680,13 +694,13 @@ impl SqliteMessageHandle {
 
 #[async_trait::async_trait(?Send)]
 impl QueueMessageHandle for SqliteMessageHandle {
-  async fn finish(&self, success: bool) -> Result<(), anyhow::Error> {
-    SqliteMessageHandle::finish(self, success).await?;
+  async fn finish(&self, success: bool) -> Result<(), JsErrorBox> {
+    SqliteMessageHandle::finish(self, success).await.map_err(JsErrorBox::from_err)?;
     Ok(())
   }
 
-  async fn take_payload(&mut self) -> Result<Vec<u8>, anyhow::Error> {
-    let payload = SqliteMessageHandle::take_payload(self).await?;
+  async fn take_payload(&mut self) -> Result<Vec<u8>, JsErrorBox> {
+    let payload = SqliteMessageHandle::take_payload(self).await.map_err(JsErrorBox::from_err)?;
     Ok(payload)
   }
 }

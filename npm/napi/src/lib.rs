@@ -67,7 +67,8 @@ pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> Result<u32> {
       num_workers: 1,
       batch_timeout: None,
     },
-  ).map_err(anyhow::Error::from)?;
+  )
+  .map_err(anyhow::Error::from)?;
 
   let db_id = DB_ID.fetch_add(1, Ordering::Relaxed);
   DBS.lock().unwrap().insert(db_id, sqlite);
@@ -285,7 +286,10 @@ pub async fn start_watch(
     .get(&db_id)
     .cloned()
     .ok_or_else(|| anyhow::anyhow!("db not found"))?;
-  let stream = db.watch(keys).map_err(|e| anyhow::Error::from(e).into()).boxed();
+  let stream = db
+    .watch(keys)
+    .map_err(|e| anyhow::Error::from(e).into())
+    .boxed();
 
   let watch_id = WATCH_ID.fetch_add(1, Ordering::Relaxed);
   WATCHES.lock().unwrap().insert(watch_id, stream);

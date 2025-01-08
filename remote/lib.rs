@@ -9,12 +9,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context;
 use async_stream::try_stream;
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::DateTime;
 use chrono::Utc;
+use deno_error::JsError;
+use deno_error::JsErrorBox;
 use denokv_proto::decode_value;
 use denokv_proto::AtomicWrite;
 use denokv_proto::CommitResult;
@@ -42,6 +43,7 @@ use log::warn;
 use prost::Message;
 use rand::Rng;
 use serde::Deserialize;
+use thiserror::Error;
 use time::utc_now;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -139,7 +141,7 @@ enum MetadataState {
 }
 
 pub trait RemotePermissions: Clone + 'static {
-  fn check_net_url(&self, url: &Url) -> Result<(), anyhow::Error>;
+  fn check_net_url(&self, url: &Url) -> Result<(), JsErrorBox>;
 }
 
 /// Implements a transport that can POST bytes to a remote service.
@@ -154,7 +156,7 @@ pub trait RemoteTransport: Clone + Send + Sync + 'static {
     headers: http::HeaderMap,
     body: Bytes,
   ) -> impl Future<
-    Output = Result<(Url, http::StatusCode, Self::Response), anyhow::Error>,
+    Output = Result<(Url, http::StatusCode, Self::Response), JsErrorBox>,
   > + Send
        + Sync;
 }
@@ -164,21 +166,60 @@ pub trait RemoteResponse: Send + Sync {
   /// The bytes associated with this response.
   fn bytes(
     self,
-  ) -> impl Future<Output = Result<Bytes, anyhow::Error>> + Send + Sync;
+  ) -> impl Future<Output = Result<Bytes, JsErrorBox>> + Send + Sync;
   /// The text associated with this response.
   fn text(
     self,
-  ) -> impl Future<Output = Result<String, anyhow::Error>> + Send + Sync;
+  ) -> impl Future<Output = Result<String, JsErrorBox>> + Send + Sync;
   /// The stream of bytes associated with this response.
   fn stream(
     self,
-  ) -> impl Stream<Item = Result<Bytes, anyhow::Error>> + Send + Sync;
+  ) -> impl Stream<Item = Result<Bytes, JsErrorBox>> + Send + Sync;
 }
 
 enum RetryableResult<T, E> {
   Ok(T),
   Retry,
   Err(E),
+}
+
+#[derive(Debug, Error, JsError)]
+pub enum CallRawError {
+  #[class(generic)]
+  #[error("Database is closed")]
+  DatabaseClosed,
+  #[class(generic)]
+  #[error("strong consistency endpoints available")]
+  MissingStrongConsistencyEndpoints,
+  #[class(inherit)]
+  #[error(transparent)]
+  Url(#[from] url::ParseError),
+  #[class(generic)]
+  #[error("KV Connect failed to call '{url}' (status={status}): {body}")]
+  CallFailed {
+    url: Url,
+    status: StatusCode,
+    body: String,
+  },
+  #[class(inherit)]
+  #[error("{0}")]
+  Permission(JsErrorBox),
+  #[class(generic)]
+  #[error("{0}")]
+  Other(String),
+}
+
+#[derive(Debug, Error, JsError)]
+pub enum CallDataError {
+  #[class(inherit)]
+  #[error(transparent)]
+  CallRaw(#[from] CallRawError),
+  #[class(generic)]
+  #[error("KV Connect failed to read response body: {0}")]
+  ReadResponse(JsErrorBox),
+  #[class(generic)]
+  #[error("KV Connect failed to decode response")]
+  Decode(#[source] prost::DecodeError),
 }
 
 #[derive(Clone)]
@@ -213,7 +254,7 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
     &self,
     method: &'static str,
     req: Req,
-  ) -> Result<(T::Response, ProtocolVersion), anyhow::Error> {
+  ) -> Result<(T::Response, ProtocolVersion), CallRawError> {
     let attempt = 0;
     let req_body = Bytes::from(req.encode_to_vec());
     loop {
@@ -223,11 +264,11 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
           MetadataState::Pending => {}
           MetadataState::Ok(metadata) => break metadata.clone(),
           MetadataState::Error(e) => {
-            return Err(anyhow::anyhow!("{}", e));
+            return Err(CallRawError::Other(e.to_string()));
           }
         };
         if metadata_rx.changed().await.is_err() {
-          return Err(anyhow::anyhow!("Database is closed."));
+          return Err(CallRawError::DatabaseClosed);
         }
       };
 
@@ -238,14 +279,15 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
       {
         Some(endpoint) => endpoint,
         None => {
-          return Err(anyhow::anyhow!(
-            "No strong consistency endpoints available."
-          ));
+          return Err(CallRawError::MissingStrongConsistencyEndpoints);
         }
       };
 
       let url = Url::parse(&format!("{}/{}", endpoint.url, method))?;
-      self.permissions.check_net_url(&url)?;
+      self
+        .permissions
+        .check_net_url(&url)
+        .map_err(CallRawError::Permission)?;
 
       let req = self
         .client
@@ -269,12 +311,11 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
           let status = resp.1;
           let b = resp.2.bytes().await.unwrap_or_default();
           let body = String::from_utf8_lossy(&b);
-          return Err(anyhow::anyhow!(
-            "KV Connect failed to call '{}' (status={}): {}",
+          return Err(CallRawError::CallFailed {
             url,
             status,
-            body
-          ));
+            body: body.to_string(),
+          });
         }
         Err(err) => {
           error!("KV Connect failed to call '{}': {}", url, err);
@@ -296,9 +337,12 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
       impl Stream<Item = Result<Bytes, io::Error>>,
       ProtocolVersion,
     ),
-    anyhow::Error,
+    JsErrorBox,
   > {
-    let (resp, version) = self.call_raw(method, req).await?;
+    let (resp, version) = self
+      .call_raw(method, req)
+      .await
+      .map_err(JsErrorBox::from_err)?;
     let stream = resp
       .stream()
       .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
@@ -309,21 +353,17 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
     &self,
     method: &'static str,
     req: Req,
-  ) -> Result<(Resp, ProtocolVersion), anyhow::Error> {
+  ) -> Result<(Resp, ProtocolVersion), CallDataError> {
     let (resp, version) = self.call_raw(method, req).await?;
 
     let resp_body = match resp.bytes().await {
       Ok(resp_body) => resp_body,
       Err(err) => {
-        return Err(anyhow::anyhow!(
-          "KV Connect failed to read response body: {}",
-          err
-        ));
+        return Err(CallDataError::ReadResponse(err));
       }
     };
 
-    let resp = Resp::decode(resp_body)
-      .context("KV Connect failed to decode response")?;
+    let resp = Resp::decode(resp_body).map_err(CallDataError::Decode)?;
 
     Ok((resp, version))
   }
@@ -530,6 +570,66 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
   })
 }
 
+#[derive(Debug, Error, JsError)]
+pub enum SnapshotReadError {
+  #[class(inherit)]
+  #[error(transparent)]
+  CallData(#[from] CallDataError),
+  #[class(generic)]
+  #[error("Reads are disabled for this database")]
+  ReadsDisabled,
+  #[class(generic)]
+  #[error("Unspecified read error (code={0})")]
+  UnspecifiedRead(i32),
+  #[class(generic)]
+  #[error("Strong consistency reads are not available for this database")]
+  StrongConsistencyReadsUnavailable,
+  #[class(generic)]
+  #[error("Unknown encoding {0}")]
+  UnknownEncoding(i32),
+  #[class(generic)]
+  #[error(transparent)]
+  TryFromSlice(std::array::TryFromSliceError),
+}
+
+#[derive(Debug, Error, JsError)]
+pub enum AtomicWriteError {
+  #[class(generic)]
+  #[error("Enqueue operations are not supported in KV Connect")]
+  EnqueueOperationsUnsupported,
+  #[class(inherit)]
+  #[error(transparent)]
+  CallData(#[from] CallDataError),
+  #[class(generic)]
+  #[error("Writes are disabled for this database")]
+  WritesDisabled,
+  #[class(generic)]
+  #[error("Unspecified write error")]
+  UnspecifiedWrite,
+  #[class(generic)]
+  #[error(transparent)]
+  TryFromSlice(std::array::TryFromSliceError),
+}
+
+#[derive(Debug, Error, JsError)]
+pub enum WatchError {
+  #[class(generic)]
+  #[error("Failed to decode watch output")]
+  Decode(#[source] prost::DecodeError),
+  #[class(generic)]
+  #[error("Reads are disabled for this database")]
+  ReadsDisabled,
+  #[class(generic)]
+  #[error("Unspecified read error (code={0})")]
+  UnspecifiedRead(i32),
+  #[class(generic)]
+  #[error("Unknown encoding {0}")]
+  UnknownEncoding(i32),
+  #[class(generic)]
+  #[error(transparent)]
+  TryFromSlice(std::array::TryFromSliceError),
+}
+
 #[async_trait(?Send)]
 impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
   type QMH = DummyQueueMessageHandle;
@@ -538,7 +638,7 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
     &self,
     requests: Vec<ReadRange>,
     options: SnapshotReadOptions,
-  ) -> Result<Vec<ReadRangeOutput>, anyhow::Error> {
+  ) -> Result<Vec<ReadRangeOutput>, JsErrorBox> {
     let ranges = requests
       .into_iter()
       .map(|r| pb::ReadRange {
@@ -550,28 +650,28 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
       .collect();
     let req = pb::SnapshotRead { ranges };
 
-    let (res, version): (pb::SnapshotReadOutput, _) =
-      self.call_data("snapshot_read", req).await?;
+    let (res, version): (pb::SnapshotReadOutput, _) = self
+      .call_data("snapshot_read", req)
+      .await
+      .map_err(|e| JsErrorBox::from_err(SnapshotReadError::CallData(e)))?;
 
     match version {
       ProtocolVersion::V1 | ProtocolVersion::V2 => {
         if res.read_disabled {
           // TODO: this should result in a retry after a forced metadata refresh.
-          return Err(anyhow::anyhow!("Reads are disabled for this database."));
+          return Err(JsErrorBox::from_err(SnapshotReadError::ReadsDisabled));
         }
       }
       ProtocolVersion::V3 => match res.status() {
         pb::SnapshotReadStatus::SrSuccess => {}
         pb::SnapshotReadStatus::SrReadDisabled => {
           // TODO: this should result in a retry after a forced metadata refresh.
-          return Err(anyhow::anyhow!("Reads are disabled for this database."));
+          return Err(JsErrorBox::from_err(SnapshotReadError::ReadsDisabled));
         }
         pb::SnapshotReadStatus::SrUnspecified => {
-          Err(anyhow::anyhow!(
-            "Unspecified read error (code={}).",
-            res.status
-          ))?;
-          unreachable!();
+          return Err(JsErrorBox::from_err(
+            SnapshotReadError::UnspecifiedRead(res.status),
+          ));
         }
       },
     }
@@ -580,8 +680,8 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
       && options.consistency == Consistency::Strong
     {
       // TODO: this should result in a retry after a forced metadata refresh.
-      return Err(anyhow::anyhow!(
-        "Strong consistency reads are not available for this database."
+      return Err(JsErrorBox::from_err(
+        SnapshotReadError::StrongConsistencyReadsUnavailable,
       ));
     }
 
@@ -597,15 +697,17 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
               Ok(KvEntry {
                 key: e.key,
                 value: decode_value(e.value, e.encoding as i64).ok_or_else(
-                  || anyhow::anyhow!("Unknown encoding {}", e.encoding),
+                  || SnapshotReadError::UnknownEncoding(e.encoding),
                 )?,
-                versionstamp: <[u8; 10]>::try_from(&e.versionstamp[..])?,
+                versionstamp: <[u8; 10]>::try_from(&e.versionstamp[..])
+                  .map_err(SnapshotReadError::TryFromSlice)?,
               })
             })
-            .collect::<Result<_, anyhow::Error>>()?,
+            .collect::<Result<_, SnapshotReadError>>()?,
         })
       })
-      .collect::<Result<_, anyhow::Error>>()?;
+      .collect::<Result<_, SnapshotReadError>>()
+      .map_err(JsErrorBox::from_err)?;
 
     Ok(ranges)
   }
@@ -613,10 +715,10 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
   async fn atomic_write(
     &self,
     write: AtomicWrite,
-  ) -> Result<Option<CommitResult>, anyhow::Error> {
+  ) -> Result<Option<CommitResult>, JsErrorBox> {
     if !write.enqueues.is_empty() {
-      return Err(anyhow::anyhow!(
-        "Enqueue operations are not supported in KV Connect.",
+      return Err(JsErrorBox::from_err(
+        AtomicWriteError::EnqueueOperationsUnsupported,
       ));
     }
 
@@ -717,26 +819,30 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
       enqueues: Vec::new(),
     };
 
-    let (res, _): (pb::AtomicWriteOutput, _) =
-      self.call_data("atomic_write", req).await?;
+    let (res, _): (pb::AtomicWriteOutput, _) = self
+      .call_data("atomic_write", req)
+      .await
+      .map_err(|e| JsErrorBox::from_err(AtomicWriteError::CallData(e)))?;
 
     match res.status() {
       pb::AtomicWriteStatus::AwSuccess => Ok(Some(CommitResult {
-        versionstamp: <[u8; 10]>::try_from(&res.versionstamp[..])?,
+        versionstamp: <[u8; 10]>::try_from(&res.versionstamp[..]).map_err(
+          |e| JsErrorBox::from_err(AtomicWriteError::TryFromSlice(e)),
+        )?,
       })),
       pb::AtomicWriteStatus::AwCheckFailure => Ok(None),
       pb::AtomicWriteStatus::AwWriteDisabled => {
-        Err(anyhow::anyhow!("Writes are disabled for this database."))
+        Err(JsErrorBox::from_err(AtomicWriteError::WritesDisabled))
       }
       pb::AtomicWriteStatus::AwUnspecified => {
-        Err(anyhow::anyhow!("Unspecified write error."))
+        Err(JsErrorBox::from_err(AtomicWriteError::UnspecifiedWrite))
       }
     }
   }
 
   async fn dequeue_next_message(
     &self,
-  ) -> Result<Option<Self::QMH>, anyhow::Error> {
+  ) -> Result<Option<Self::QMH>, JsErrorBox> {
     warn!("KV Connect does not support queues.");
     std::future::pending().await
   }
@@ -744,8 +850,7 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
   fn watch(
     &self,
     keys: Vec<Vec<u8>>,
-  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, anyhow::Error>>>>
-  {
+  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>>>> {
     let this = self.clone();
     let stream = try_stream! {
       let mut attempt = 0;
@@ -779,16 +884,16 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
             }
           };
 
-          let data = pb::WatchOutput::decode(frame).context("Failed to decode watch output")?;
+          let data = pb::WatchOutput::decode(frame).map_err(|e: prost::DecodeError| JsErrorBox::from_err(WatchError::Decode(e)))?;
           match data.status() {
             pb::SnapshotReadStatus::SrSuccess => {}
             pb::SnapshotReadStatus::SrReadDisabled => {
               // TODO: this should result in a retry after a forced metadata refresh.
-              Err(anyhow::anyhow!("Reads are disabled for this database."))?;
+              Err(JsErrorBox::from_err(WatchError::ReadsDisabled))?;
               unreachable!();
             }
             pb::SnapshotReadStatus::SrUnspecified => {
-              Err(anyhow::anyhow!("Unspecified read error (code={}).", data.status))?;
+              Err(JsErrorBox::from_err(WatchError::UnspecifiedRead(data.status)))?;
               unreachable!();
             }
           }
@@ -801,11 +906,11 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
               let entry = match key.entry_if_changed {
                 Some(entry) => {
                   let value = decode_value(entry.value, entry.encoding as i64)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown encoding {}", entry.encoding))?;
+                    .ok_or_else(|| JsErrorBox::from_err(WatchError::UnknownEncoding(entry.encoding)))?;
                   Some(KvEntry {
                     key: entry.key,
                     value,
-                    versionstamp: <[u8; 10]>::try_from(&entry.versionstamp[..])?,
+                    versionstamp: <[u8; 10]>::try_from(&entry.versionstamp[..]).map_err(|e| JsErrorBox::from_err(WatchError::TryFromSlice(e)))?,
                   })
                 },
                 None => None,
@@ -830,11 +935,11 @@ pub struct DummyQueueMessageHandle {}
 
 #[async_trait(?Send)]
 impl QueueMessageHandle for DummyQueueMessageHandle {
-  async fn take_payload(&mut self) -> Result<Vec<u8>, anyhow::Error> {
+  async fn take_payload(&mut self) -> Result<Vec<u8>, JsErrorBox> {
     unimplemented!()
   }
 
-  async fn finish(&self, _success: bool) -> Result<(), anyhow::Error> {
+  async fn finish(&self, _success: bool) -> Result<(), JsErrorBox> {
     unimplemented!()
   }
 }

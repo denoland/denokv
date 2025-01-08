@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use chrono::DateTime;
 use chrono::Utc;
+use deno_error::JsErrorBox;
 use denokv_proto::decode_value;
 use denokv_proto::encode_value;
 use denokv_proto::encode_value_owned;
@@ -125,13 +126,15 @@ const DEFAULT_BACKOFF_SCHEDULE: [u32; 5] = [100, 1000, 5000, 30000, 60000];
 // processing a message.
 const MESSAGE_DEADLINE_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, deno_error::JsError)]
+#[class(type)]
 pub enum SqliteBackendError {
   #[error(transparent)]
   SqliteError(#[from] rusqlite::Error),
 
+  #[class(inherit)]
   #[error(transparent)]
-  GenericError(#[from] anyhow::Error),
+  GenericError(#[from] JsErrorBox),
 
   #[error("Database is closed.")]
   DatabaseClosed,
@@ -180,7 +183,7 @@ impl SqliteBackend {
     notifier: SqliteNotifier,
     rng: Box<dyn RngCore + Send>,
     force_readonly: bool,
-  ) -> Result<Self, anyhow::Error> {
+  ) -> Result<Self, SqliteBackendError> {
     let readonly = force_readonly || conn.is_readonly(DatabaseName::Main)?;
     let mut this = Self {
       conn,
@@ -309,8 +312,8 @@ impl SqliteBackend {
           .iter()
           .map(|_| {
             Err(e.take().unwrap_or_else(|| {
-              SqliteBackendError::GenericError(anyhow::anyhow!(
-                "batch transaction failed"
+              SqliteBackendError::GenericError(JsErrorBox::generic(
+                "batch transaction failed",
               ))
             }))
           })
@@ -449,10 +452,10 @@ impl SqliteBackend {
           .as_deref()
           .or_else(|| Some(&DEFAULT_BACKOFF_SCHEDULE[..])),
       )
-      .map_err(anyhow::Error::from)?;
+      .map_err(JsErrorBox::from_err)?;
       let keys_if_undelivered =
         serde_json::to_string(&enqueue.keys_if_undelivered)
-          .map_err(anyhow::Error::from)?;
+          .map_err(JsErrorBox::from_err)?;
 
       let changed =
         tx.prepare_cached(STATEMENT_QUEUE_ADD_READY)?
@@ -700,7 +703,7 @@ fn requeue_message(
   let backoff_schedule = {
     let backoff_schedule =
       serde_json::from_str::<Option<Vec<u64>>>(&backoff_schedule)
-        .map_err(anyhow::Error::from)?;
+        .map_err(JsErrorBox::from_err)?;
     backoff_schedule.unwrap_or_default()
   };
 
@@ -709,7 +712,7 @@ fn requeue_message(
     // Requeue based on backoff schedule
     let new_ts = now + Duration::from_millis(backoff_schedule[0]);
     let new_backoff_schedule = serde_json::to_string(&backoff_schedule[1..])
-      .map_err(anyhow::Error::from)?;
+      .map_err(JsErrorBox::from_err)?;
     let changed =
       tx.prepare_cached(STATEMENT_QUEUE_ADD_READY)?
         .execute(params![
@@ -725,7 +728,7 @@ fn requeue_message(
     // No more requeues. Insert the message into the undelivered queue.
     let keys_if_undelivered =
       serde_json::from_str::<Vec<Vec<u8>>>(&keys_if_undelivered)
-        .map_err(anyhow::Error::from)?;
+        .map_err(JsErrorBox::from_err)?;
 
     let incrementer_count = rng.gen_range(1..10);
     let version: i64 = tx

@@ -5,9 +5,9 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use bytes::Bytes;
+use deno_error::JsErrorBox;
 use denokv_proto::AtomicWrite;
 use denokv_proto::Database;
-use denokv_proto::KvEntry;
 use denokv_proto::KvValue;
 use denokv_proto::ReadRange;
 use denokv_proto::WatchKeyOutput;
@@ -40,8 +40,15 @@ impl RemoteTransport for ReqwestClient {
     url: Url,
     headers: http::HeaderMap,
     body: Bytes,
-  ) -> Result<(Url, http::StatusCode, Self::Response), anyhow::Error> {
-    let res = self.0.post(url).headers(headers).body(body).send().await?;
+  ) -> Result<(Url, http::StatusCode, Self::Response), JsErrorBox> {
+    let res = self
+      .0
+      .post(url)
+      .headers(headers)
+      .body(body)
+      .send()
+      .await
+      .map_err(|e| JsErrorBox::generic(e.to_string()))?;
     let url = res.url().clone();
     let status = res.status();
     Ok((url, status, ReqwestResponse(res)))
@@ -49,16 +56,27 @@ impl RemoteTransport for ReqwestClient {
 }
 
 impl RemoteResponse for ReqwestResponse {
-  async fn bytes(self) -> Result<Bytes, anyhow::Error> {
-    Ok(self.0.bytes().await?)
+  async fn bytes(self) -> Result<Bytes, JsErrorBox> {
+    self
+      .0
+      .bytes()
+      .await
+      .map_err(|e| JsErrorBox::generic(e.to_string()))
   }
   fn stream(
     self,
-  ) -> impl Stream<Item = Result<Bytes, anyhow::Error>> + Send + Sync {
-    self.0.bytes_stream().map_err(|e| e.into())
+  ) -> impl Stream<Item = Result<Bytes, JsErrorBox>> + Send + Sync {
+    self
+      .0
+      .bytes_stream()
+      .map_err(|e| JsErrorBox::generic(e.to_string()))
   }
-  async fn text(self) -> Result<String, anyhow::Error> {
-    Ok(self.0.text().await?)
+  async fn text(self) -> Result<String, JsErrorBox> {
+    self
+      .0
+      .text()
+      .await
+      .map_err(|e| JsErrorBox::generic(e.to_string()))
   }
 }
 
@@ -136,7 +154,7 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
 struct DummyPermissions;
 
 impl denokv_remote::RemotePermissions for DummyPermissions {
-  fn check_net_url(&self, _url: &reqwest::Url) -> Result<(), anyhow::Error> {
+  fn check_net_url(&self, _url: &reqwest::Url) -> Result<(), JsErrorBox> {
     Ok(())
   }
 }

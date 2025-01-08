@@ -8,6 +8,7 @@ use std::pin::Pin;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
+use deno_error::JsErrorBox;
 use futures::Stream;
 use num_bigint::BigInt;
 use serde::Deserialize;
@@ -17,7 +18,7 @@ use uuid::Uuid;
 use crate::codec::canonicalize_f64;
 
 pub type WatchStream =
-  Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, anyhow::Error>>>>;
+  Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>>>>;
 
 #[async_trait(?Send)]
 pub trait Database: Clone + Sized {
@@ -27,16 +28,15 @@ pub trait Database: Clone + Sized {
     &self,
     requests: Vec<ReadRange>,
     options: SnapshotReadOptions,
-  ) -> Result<Vec<ReadRangeOutput>, anyhow::Error>;
+  ) -> Result<Vec<ReadRangeOutput>, JsErrorBox>;
 
   async fn atomic_write(
     &self,
     write: AtomicWrite,
-  ) -> Result<Option<CommitResult>, anyhow::Error>;
+  ) -> Result<Option<CommitResult>, JsErrorBox>;
 
-  async fn dequeue_next_message(
-    &self,
-  ) -> Result<Option<Self::QMH>, anyhow::Error>;
+  async fn dequeue_next_message(&self)
+    -> Result<Option<Self::QMH>, JsErrorBox>;
 
   fn watch(&self, keys: Vec<Vec<u8>>) -> WatchStream;
 
@@ -45,16 +45,16 @@ pub trait Database: Clone + Sized {
 
 #[async_trait(?Send)]
 pub trait QueueMessageHandle {
-  async fn take_payload(&mut self) -> Result<Vec<u8>, anyhow::Error>;
-  async fn finish(&self, success: bool) -> Result<(), anyhow::Error>;
+  async fn take_payload(&mut self) -> Result<Vec<u8>, JsErrorBox>;
+  async fn finish(&self, success: bool) -> Result<(), JsErrorBox>;
 }
 
 #[async_trait(?Send)]
 impl QueueMessageHandle for Box<dyn QueueMessageHandle> {
-  async fn take_payload(&mut self) -> Result<Vec<u8>, anyhow::Error> {
+  async fn take_payload(&mut self) -> Result<Vec<u8>, JsErrorBox> {
     (**self).take_payload().await
   }
-  async fn finish(&self, success: bool) -> Result<(), anyhow::Error> {
+  async fn finish(&self, success: bool) -> Result<(), JsErrorBox> {
     (**self).finish(success).await
   }
 }

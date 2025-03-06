@@ -39,7 +39,7 @@ prost = "0.13"
 prost-build = "0.13"
 rand = "0.8.5"
 reqwest = { version = "0.12.4", default-features = false, features = ["json", "stream"] }
-rusqlite = "0.32.0"
+rusqlite = "0.34.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.107"
 tempfile = "3"

@@ -124,7 +124,7 @@ jobs:
         if: ${{ !matrix.settings.docker }}
         working-directory: ./npm/napi
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bindings-${{ matrix.settings.target }}
           path: npm/napi/${{ env.APP_NAME }}.*.node

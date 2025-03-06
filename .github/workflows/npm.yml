@@ -191,7 +191,7 @@ jobs:
         run: yarn install
         working-directory: ./npm/napi
       - name: Download artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: bindings-x86_64-unknown-linux-gnu
           path: ./npm/napi
@@ -222,7 +222,7 @@ jobs:
         run: yarn install
         working-directory: ./npm/napi
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: npm/napi/artifacts
       - name: Move artifacts

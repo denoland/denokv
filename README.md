@@ -177,7 +177,7 @@ variable.
 `denokv` has a mode for running as a replica of a KV database hosted on Deno
 Deploy through the S3 backup feature.
 
-To run as a replica:
+To run as a replica from an AWS S3 bucket:
 
 ```sh
 docker run -it --init -p 4512:4512 -v ./data:/data \
@@ -187,6 +187,8 @@ docker run -it --init -p 4512:4512 -v ./data:/data \
   ghcr.io/denoland/denokv --sqlite-path /data/denokv.sqlite serve \
   --access-token <random-token> --sync-from-s3 --s3-bucket your-bucket --s3-prefix some-prefix/6aea9765-2b1e-41c7-8904-0bdcd70b21d3/
 ```
+
+If you use another S3-compatible storage provider like Google Cloud Storage, you'll also need to set `--s3-endpoint https://storage.googleapis.com`.
 
 To sync the local database from S3, without updating the snapshot:
 
@@ -218,7 +220,7 @@ This repository contains two crates:
   `Key`, `Database`, and `Value`.
 - `denokv_sqlite` (`/sqlite`): An implementation of `Database` backed by SQLite.
 - `denokv_remote` (`/remote`): An implementation of `Database` backed by a
-  remote KV database, acessible via the KV Connect protocol.
+  remote KV database, accessible via the KV Connect protocol.
 
 These crates are used by the `deno_kv` crate in the Deno repository to provide a
 JavaScript API for interacting with Deno KV.

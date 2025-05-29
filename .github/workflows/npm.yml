@@ -45,6 +45,7 @@ jobs:
             docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
             build: |-
               set -e &&
+              apt-get update &&
               apt-get -y install protobuf-compiler &&
               yarn build --target x86_64-unknown-linux-gnu &&
               strip *.node

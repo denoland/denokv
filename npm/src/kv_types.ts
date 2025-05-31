@@ -500,6 +500,13 @@ export interface AtomicOperation {
    */
   check(...checks: AtomicCheck[]): this;
   /**
+   * Add to the operation a mutation that performs the specified mutation on the
+   * specified key if all checks pass during the commit. The types and semantics
+   * of all available mutations are described in the documentation for
+   * {@linkcode KvMutation}.
+   */
+  mutate(...mutations: KvMutation[]): this;
+  /**
    * Shortcut for creating a `sum` mutation, the value of `n` must be in the range
    * `[0, 2^64-1]`.
    */

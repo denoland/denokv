@@ -571,6 +571,16 @@ export interface AtomicCheck {
   versionstamp: string | null;
 }
 
+export type KvMutation =
+  & { key: KvKey }
+  & (
+    | { type: "set"; value: unknown; expireIn?: number }
+    | { type: "delete" }
+    | { type: "sum"; value: { readonly value: bigint } }
+    | { type: "max"; value: { readonly value: bigint } }
+    | { type: "min"; value: { readonly value: bigint } }
+  );
+
 /** @category KV */
 export interface KvCommitError {
   ok: false;

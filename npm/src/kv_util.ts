@@ -20,6 +20,7 @@ import {
   KvListIterator,
   KvListOptions,
   KvListSelector,
+  KvMutation,
 } from "./kv_types.ts";
 import { _KvU64 } from "./kv_u64.ts";
 import { defer, Deferred } from "./proto/runtime/async/observer.ts";
@@ -41,16 +42,6 @@ export type KvValue = {
   data: Uint8Array;
   encoding: KvValueEncoding;
 };
-
-export type KvMutation =
-  & { key: KvKey }
-  & (
-    | { type: "set"; value: unknown; expireIn?: number }
-    | { type: "delete" }
-    | { type: "sum"; value: { readonly value: bigint } }
-    | { type: "max"; value: { readonly value: bigint } }
-    | { type: "min"; value: { readonly value: bigint } }
-  );
 
 export function unpackKvu(bytes: Uint8Array): _KvU64 {
   if (bytes.length !== 8) throw new Error();

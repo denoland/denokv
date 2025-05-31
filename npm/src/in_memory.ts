@@ -14,6 +14,7 @@ import {
   KvKey,
   KvListOptions,
   KvListSelector,
+  KvMutation,
   KvService,
 } from "./kv_types.ts";
 import { _KvU64 } from "./kv_u64.ts";
@@ -23,7 +24,6 @@ import {
   Enqueue,
   Expirer,
   isValidVersionstamp,
-  KvMutation,
   packCursor,
   packVersionstamp,
   QueueHandler,

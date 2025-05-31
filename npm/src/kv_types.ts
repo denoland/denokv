@@ -500,6 +500,13 @@ export interface AtomicOperation {
    */
   check(...checks: AtomicCheck[]): this;
   /**
+   * Add to the operation a mutation that performs the specified mutation on the
+   * specified key if all checks pass during the commit. The types and semantics
+   * of all available mutations are described in the documentation for
+   * {@linkcode KvMutation}.
+   */
+  mutate(...mutations: KvMutation[]): this;
+  /**
    * Shortcut for creating a `sum` mutation, the value of `n` must be in the range
    * `[0, 2^64-1]`.
    */
@@ -570,6 +577,47 @@ export interface AtomicCheck {
   key: KvKey;
   versionstamp: string | null;
 }
+
+/** **UNSTABLE**: New API, yet to be vetted.
+ *
+ * A mutation to a key in a {@linkcode Kv}. A mutation is a combination of a
+ * key, a value, and a type. The type determines how the mutation is applied to
+ * the key.
+ *
+ * - `set` - Sets the value of the key to the given value, overwriting any
+ *   existing value. Optionally an `expireIn` option can be specified to set a
+ *   time-to-live (TTL) for the key. The TTL is specified in milliseconds, and
+ *   the key will be deleted from the database at earliest after the specified
+ *   number of milliseconds have elapsed. Once the specified duration has
+ *   passed, the key may still be visible for some additional time. If the
+ *   `expireIn` option is not specified, the key will not expire.
+ * - `delete` - Deletes the key from the database. The mutation is a no-op if
+ *   the key does not exist.
+ * - `sum` - Adds the given value to the existing value of the key. Both the
+ *   value specified in the mutation, and any existing value must be of type
+ *   `Deno.KvU64`. If the key does not exist, the value is set to the given
+ *   value (summed with 0). If the result of the sum overflows an unsigned
+ *   64-bit integer, the result is wrapped around.
+ * - `max` - Sets the value of the key to the maximum of the existing value and
+ *   the given value. Both the value specified in the mutation, and any existing
+ *   value must be of type `Deno.KvU64`. If the key does not exist, the value is
+ *   set to the given value.
+ * - `min` - Sets the value of the key to the minimum of the existing value and
+ *   the given value. Both the value specified in the mutation, and any existing
+ *   value must be of type `Deno.KvU64`. If the key does not exist, the value is
+ *   set to the given value.
+ *
+ * @category KV
+ */
+export type KvMutation =
+  & { key: KvKey }
+  & (
+    | { type: "set"; value: unknown; expireIn?: number }
+    | { type: "delete" }
+    | { type: "sum"; value: { readonly value: bigint } }
+    | { type: "max"; value: { readonly value: bigint } }
+    | { type: "min"; value: { readonly value: bigint } }
+  );
 
 /** @category KV */
 export interface KvCommitError {

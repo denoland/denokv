@@ -32,7 +32,7 @@ use std::sync::Mutex;
 #[napi]
 pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> Result<u32> {
   if debug {
-    println!("[napi] open: path={:#?} in_memory={:#?}", path, in_memory)
+    println!("[napi] open: path={path:#?} in_memory={in_memory:#?}")
   }
   let flags = if let Some(true) = in_memory {
     OpenFlags::default() | OpenFlags::SQLITE_OPEN_MEMORY
@@ -74,10 +74,7 @@ pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> Result<u32> {
   DBS.lock().unwrap().insert(db_id, sqlite);
 
   if debug {
-    println!(
-      "[napi] open: db_id={:#?} opened_path={:#?}",
-      db_id, opened_path
-    )
+    println!("[napi] open: db_id={db_id:#?} opened_path={opened_path:#?}")
   }
   Ok(db_id)
 }
@@ -85,7 +82,7 @@ pub fn open(path: String, in_memory: Option<bool>, debug: bool) -> Result<u32> {
 #[napi]
 pub fn close(db_id: u32, debug: bool) {
   if debug {
-    println!("[napi] close: db_id={:#?}", db_id)
+    println!("[napi] close: db_id={db_id:#?}")
   }
   let db = DBS.lock().unwrap().remove(&db_id);
   if let Some(db) = db {
@@ -104,8 +101,7 @@ pub async fn snapshot_read(
       .map_err(convert_prost_decode_error_to_anyhow)?;
   if debug {
     println!(
-      "[napi] snapshot_read: db_id={:#?} snapshot_read_pb={:#?}",
-      db_id, snapshot_read_pb
+      "[napi] snapshot_read: db_id={db_id:#?} snapshot_read_pb={snapshot_read_pb:#?}"
     )
   }
 
@@ -131,7 +127,7 @@ pub async fn snapshot_read(
     .into();
 
   if debug {
-    println!("[napi] snapshot_read: output_pb={:#?}", output_pb)
+    println!("[napi] snapshot_read: output_pb={output_pb:#?}")
   }
 
   Ok(to_buffer(output_pb))
@@ -148,8 +144,7 @@ pub async fn atomic_write(
       .map_err(convert_prost_decode_error_to_anyhow)?;
   if debug {
     println!(
-      "[napi] atomic_write: db_id={:#?} atomic_write_pb={:#?}",
-      db_id, atomic_write_pb
+      "[napi] atomic_write: db_id={db_id:#?} atomic_write_pb={atomic_write_pb:#?}"
     )
   }
 
@@ -171,10 +166,7 @@ pub async fn atomic_write(
     .into();
 
   if debug {
-    println!(
-      "[napi] atomic_write: db_id={:#?} output_pb={:#?}",
-      db_id, output_pb
-    )
+    println!("[napi] atomic_write: db_id={db_id:#?} output_pb={output_pb:#?}")
   }
 
   Ok(to_buffer(output_pb))
@@ -192,7 +184,7 @@ pub async fn dequeue_next_message(
   debug: bool,
 ) -> Result<Either<QueueMessage, Undefined>> {
   if debug {
-    println!("[napi] dequeue_next_message: db_id={:#?}", db_id)
+    println!("[napi] dequeue_next_message: db_id={db_id:#?}")
   }
 
   let db = DBS
@@ -209,10 +201,7 @@ pub async fn dequeue_next_message(
 
   let Some(mut handle) = opt_handle else {
     if debug {
-      println!(
-        "[napi] dequeue_next_message: no messages! db_id={:#?}",
-        db_id
-      )
+      println!("[napi] dequeue_next_message: no messages! db_id={db_id:#?}")
     }
     return Ok(Either::B(()));
   };
@@ -227,8 +216,7 @@ pub async fn dequeue_next_message(
 
   if debug {
     println!(
-      "[napi] dequeue_next_message: received message db_id={:#?} message_id={:#?}",
-      db_id, message_id
+      "[napi] dequeue_next_message: received message db_id={db_id:#?} message_id={message_id:#?}"
     )
   }
 
@@ -245,8 +233,7 @@ pub async fn finish_message(
 ) -> Result<()> {
   if debug {
     println!(
-      "[napi] finish_message db_id={:#?} message_id={:#?} success={:#?}",
-      db_id, message_id, success
+      "[napi] finish_message db_id={db_id:#?} message_id={message_id:#?} success={success:#?}"
     )
   }
   let handle = MSGS
@@ -273,10 +260,7 @@ pub async fn start_watch(
     .map_err(convert_prost_decode_error_to_anyhow)?;
 
   if debug {
-    println!(
-      "[napi] start_watch: db_id={:#?} watch_pb={:#?}",
-      db_id, watch_pb
-    )
+    println!("[napi] start_watch: db_id={db_id:#?} watch_pb={watch_pb:#?}")
   }
 
   let keys = watch_pb.keys.iter().map(|v| v.key.clone()).collect();
@@ -305,8 +289,7 @@ pub async fn dequeue_next_watch_message(
 ) -> Result<Either<Buffer, Undefined>> {
   if debug {
     println!(
-      "[napi] dequeue_next_watch_message: db_id={:#?} watch_id={:#?}",
-      db_id, watch_id
+      "[napi] dequeue_next_watch_message: db_id={db_id:#?} watch_id={watch_id:#?}"
     )
   }
 
@@ -330,10 +313,7 @@ pub async fn dequeue_next_watch_message(
 #[napi]
 pub fn end_watch(db_id: u32, watch_id: u32, debug: bool) {
   if debug {
-    println!(
-      "[napi] end_watch: db_id={:#?} watch_id={:#?}",
-      db_id, watch_id
-    )
+    println!("[napi] end_watch: db_id={db_id:#?} watch_id={watch_id:#?}")
   }
 
   WATCHES.lock().unwrap().remove(&watch_id);

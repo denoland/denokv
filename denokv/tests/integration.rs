@@ -118,7 +118,7 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
   tokio::spawn(async move {
     // Forward stdout to our stdout.
     while let Some(line) = stdout_lines.next_line().await.unwrap() {
-      println!("{}", line);
+      println!("{line}");
     }
   });
 
@@ -132,7 +132,7 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
       .await
       .expect("server died")
       .expect("server died");
-    eprintln!("{}", line);
+    eprintln!("{line}");
     if let Some((_, addr)) = line.split_once("Listening on http://") {
       break addr.parse().unwrap();
     }
@@ -141,11 +141,11 @@ async fn start_server() -> (tokio::process::Child, SocketAddr) {
   tokio::spawn(async move {
     // Forward stderr to our stderr.
     while let Some(line) = stderr_lines.next_line().await.unwrap() {
-      eprintln!("{}", line);
+      eprintln!("{line}");
     }
   });
 
-  println!("Server started and listening on {}", addr);
+  println!("Server started and listening on {addr}");
 
   (child, addr)
 }

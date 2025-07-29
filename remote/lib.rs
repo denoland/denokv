@@ -343,9 +343,7 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
       .call_raw(method, req)
       .await
       .map_err(JsErrorBox::from_err)?;
-    let stream = resp
-      .stream()
-      .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+    let stream = resp.stream().map_err(io::Error::other);
     Ok((stream, version))
   }
 
@@ -460,10 +458,7 @@ async fn fetch_metadata<T: RemoteTransport>(
     StatusCode::OK => res,
     status if status.is_client_error() => {
       let body = res.2.text().await.unwrap_or_else(|_| String::new());
-      return RetryableResult::Err(format!(
-        "Failed to fetch metadata: {}",
-        body
-      ));
+      return RetryableResult::Err(format!("Failed to fetch metadata: {body}"));
     }
     status if status.is_server_error() => {
       let body = res.2.text().await.unwrap_or_else(|_| String::new());
@@ -475,8 +470,7 @@ async fn fetch_metadata<T: RemoteTransport>(
     }
     status => {
       return RetryableResult::Err(format!(
-        "Failed to fetch metadata (status={})",
-        status
+        "Failed to fetch metadata (status={status})"
       ));
     }
   };
@@ -487,8 +481,7 @@ async fn fetch_metadata<T: RemoteTransport>(
     Ok(body) => body,
     Err(err) => {
       return RetryableResult::Err(format!(
-        "Metadata response body invalid: {}",
-        err
+        "Metadata response body invalid: {err}"
       ));
     }
   };
@@ -496,10 +489,7 @@ async fn fetch_metadata<T: RemoteTransport>(
   let metadata = match parse_metadata(&base_url, &body) {
     Ok(metadata) => metadata,
     Err(err) => {
-      return RetryableResult::Err(format!(
-        "Failed to parse metadata: {}",
-        err
-      ));
+      return RetryableResult::Err(format!("Failed to parse metadata: {err}"));
     }
   };
 
@@ -515,7 +505,7 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
   let version: Version = match serde_json::from_str(body) {
     Ok(metadata) => metadata,
     Err(err) => {
-      return Err(format!("could not get 'version' field: {}", err));
+      return Err(format!("could not get 'version' field: {err}"));
     }
   };
 
@@ -524,7 +514,7 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
     2 => ProtocolVersion::V2,
     3 => ProtocolVersion::V3,
     version => {
-      return Err(format!("unsupported metadata version: {}", version));
+      return Err(format!("unsupported metadata version: {version}"));
     }
   };
 
@@ -532,7 +522,7 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
   let metadata: DatabaseMetadata = match serde_json::from_str(body) {
     Ok(metadata) => metadata,
     Err(err) => {
-      return Err(format!("{}", err));
+      return Err(format!("{err}"));
     }
   };
 
@@ -544,17 +534,17 @@ fn parse_metadata(base_url: &Url, body: &str) -> Result<Metadata, String> {
         Url::options().base_url(Some(base_url)).parse(&endpoint.url)
       }
     }
-    .map_err(|err| format!("invalid endpoint URL: {}", err))?;
+    .map_err(|err| format!("invalid endpoint URL: {err}"))?;
 
     if endpoint.url.ends_with('/') {
-      return Err(format!("endpoint URL must not end with '/': {}", url));
+      return Err(format!("endpoint URL must not end with '/': {url}"));
     }
 
     let consistency = match &*endpoint.consistency {
       "strong" => DataPathConsistency::Strong,
       "eventual" => DataPathConsistency::Eventual,
       consistency => {
-        return Err(format!("unsupported consistency level: {}", consistency));
+        return Err(format!("unsupported consistency level: {consistency}"));
       }
     };
 

@@ -652,12 +652,10 @@ fn replay_redo_or_undo(
     "versionstamp12 <= ? order by versionstamp12 desc"
   };
   let mut stmt_list = tx.prepare_cached(&format!(
-    "select versionstamp12, timestamp_ms, k, v, v_encoding, real_versionstamp from {} where {}",
-    source_table, source_table_select_suffix
+    "select versionstamp12, timestamp_ms, k, v, v_encoding, real_versionstamp from {source_table} where {source_table_select_suffix}"
   ))?;
   let mut stmt_delete = tx.prepare_cached(&format!(
-    "delete from {} where versionstamp12 = ?",
-    source_table
+    "delete from {source_table} where versionstamp12 = ?"
   ))?;
   let mut it = stmt_list.query(rusqlite::params![current_versionstamp12])?;
   let mut last_versionstamp12: Option<[u8; 12]> = None;
@@ -756,8 +754,7 @@ fn invert_op(
   }
   tx.execute(
     &format!(
-      "insert or ignore into {} (versionstamp12, timestamp_ms, k, v, v_encoding, real_versionstamp) values(?, ?, ?, ?, ?, ?)",
-      target_table
+      "insert or ignore into {target_table} (versionstamp12, timestamp_ms, k, v, v_encoding, real_versionstamp) values(?, ?, ?, ?, ?, ?)"
     ),
     rusqlite::params![
       versionstamp12,

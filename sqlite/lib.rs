@@ -247,7 +247,7 @@ impl Sqlite {
       let init_fence = init_fence.clone();
       let shutdown_notify = shutdown_notify.clone();
       let join_handle: JoinHandle<()> = std::thread::Builder::new()
-        .name(format!("sw-{}", i))
+        .name(format!("sw-{i}"))
         .spawn(move || {
           tokio::runtime::Builder::new_current_thread()
             .enable_all()

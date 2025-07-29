@@ -188,7 +188,7 @@ mod bigint {
     } else {
       Err(std::io::Error::new(
         std::io::ErrorKind::InvalidData,
-        format!("unknown bigint tag: {}", tag),
+        format!("unknown bigint tag: {tag}"),
       ))
     }
   }
@@ -313,7 +313,7 @@ mod tests {
     let bytes = encode_key(&key).unwrap();
     let decoded = decode_key(&bytes).unwrap();
     assert_eq!(&key, &decoded);
-    assert_eq!(format!("{:?}", key), format!("{:?}", decoded));
+    assert_eq!(format!("{key:?}"), format!("{:?}", decoded));
   }
 
   fn check_order(a: Key, b: Key, expected: Ordering) {

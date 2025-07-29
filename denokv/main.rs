@@ -639,7 +639,7 @@ impl From<SqliteBackendError> for ApiError {
 
 impl IntoResponse for ApiError {
   fn into_response(self) -> Response {
-    (self.status(), format!("{}", self)).into_response()
+    (self.status(), format!("{self}")).into_response()
   }
 }
 

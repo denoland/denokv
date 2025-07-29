@@ -1,6 +1,6 @@
 [package]
 name = "denokv"
-version = "0.11.0"
+version = "0.12.0"
 description = "A self-hosted backend for Deno KV"
 edition.workspace = true
 license.workspace = true

@@ -24,7 +24,7 @@ const stripLeadingV = (version: string) => version.replace(/^v/, "");
 const napi =
   typeof flags.napi === "string"
     ? {
-        packageName: "@deno/kv",
+        packageName: "rakiyu-deno-kv",
         packageVersion: stripLeadingV(flags.napi),
         artifactName: "deno-kv-napi",
       }

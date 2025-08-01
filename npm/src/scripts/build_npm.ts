@@ -17,22 +17,22 @@ const publish = typeof flags.publish === "string" ? flags.publish : undefined;
 const dryrun = !!flags["dry-run"];
 if (publish) {
   console.log(
-    `publish${dryrun ? ` (dryrun)` : ""} after build! (npm=${publish})`,
+    `publish${dryrun ? ` (dryrun)` : ""} after build! (npm=${publish})`
   );
 }
 const stripLeadingV = (version: string) => version.replace(/^v/, "");
-const napi = typeof flags.napi === "string"
-  ? {
-    packageName: "@deno/kv",
-    packageVersion: stripLeadingV(flags.napi),
-    artifactName: "deno-kv-napi",
-  }
-  : undefined;
+const napi =
+  typeof flags.napi === "string"
+    ? {
+        packageName: "@deno/kv",
+        packageVersion: stripLeadingV(flags.napi),
+        artifactName: "deno-kv-napi",
+      }
+    : undefined;
 if (napi) console.log(`napi: ${JSON.stringify(napi)}`);
 if (!napi) throw new Error("Must provide --napi version");
-const version = typeof Deno.args[0] === "string"
-  ? stripLeadingV(Deno.args[0])
-  : Deno.args[0];
+const version =
+  typeof Deno.args[0] === "string" ? stripLeadingV(Deno.args[0]) : Deno.args[0];
 if (typeof version !== "string" || !/^[a-z0-9.-]+$/.test(version)) {
   throw new Error(`Unexpected version: ${version}`);
 }
@@ -70,8 +70,8 @@ await build({
     license: "MIT",
     repository: {
       type: "git",
-      url: "https://github.com/denoland/denokv.git",
-      directory: "npm"
+      url: "https://github.com/Akimotorakiyu/denokv.git",
+      directory: "npm",
     },
     bugs: {
       url: "https://github.com/denoland/denokv/issues",
@@ -79,17 +79,14 @@ await build({
     homepage: "https://github.com/denoland/denokv/tree/main/npm",
     optionalDependencies: Object.fromEntries(
       ["win32-x64-msvc", "darwin-x64", "linux-x64-gnu", "darwin-arm64"].map(
-        (v) => [`${napi.packageName}-${v}`, napi.packageVersion],
-      ),
+        (v) => [`${napi.packageName}-${v}`, napi.packageVersion]
+      )
     ),
   },
   async postBuild() {
     // steps to run after building and before running the tests
     await Deno.copyFile("LICENSE", join(outDir, "LICENSE"));
-    await Deno.copyFile(
-      "README.md",
-      join(outDir, "README.md"),
-    );
+    await Deno.copyFile("README.md", join(outDir, "README.md"));
     const napiIndexJs = generateNapiIndex({
       napiPackageName: napi.packageName,
       napiArtifactName: napi.artifactName,
@@ -101,19 +98,18 @@ await build({
 
       console.log(`tweaking ${join(subdir, "napi_based.js")}`);
       const oldContents = await Deno.readTextFile(
-        join(outDir, subdir, "napi_based.js"),
+        join(outDir, subdir, "napi_based.js")
       );
-      const insertion = subdir === "esm"
-        ? `await import('./${name}')`
-        : `require('./${name}')`;
+      const insertion =
+        subdir === "esm" ? `await import('./${name}')` : `require('./${name}')`;
 
       const newContents = oldContents.replace(
         `const DEFAULT_NAPI_INTERFACE = undefined;`,
-        `const DEFAULT_NAPI_INTERFACE = ${insertion};`,
+        `const DEFAULT_NAPI_INTERFACE = ${insertion};`
       );
       await Deno.writeTextFile(
         join(outDir, subdir, "napi_based.js"),
-        newContents,
+        newContents
       );
     }
   },
@@ -125,7 +121,7 @@ if (publish) {
     const packageJson = await Deno.readTextFile(path);
     const newPackageJson = packageJson.replace(
       /("version"\s*:\s*")[0-9a-z.-]+"/,
-      `$1${version}"`,
+      `$1${version}"`
     );
     if (packageJson === newPackageJson) {
       throw new Error(`Unable to replace version!`);
@@ -149,10 +145,9 @@ if (publish) {
   };
 
   // first, publish the native subpackages
-  for (
-    const { name: subdir } of (await Array.fromAsync(Deno.readDir("napi/npm")))
-      .filter((v) => v.isDirectory)
-  ) {
+  for (const { name: subdir } of (
+    await Array.fromAsync(Deno.readDir("napi/npm"))
+  ).filter((v) => v.isDirectory)) {
     const path = join("napi", "npm", subdir, "package.json");
     await updatePackageJsonVersion(path, version);
     await npmPublish(join("napi", "npm", subdir));

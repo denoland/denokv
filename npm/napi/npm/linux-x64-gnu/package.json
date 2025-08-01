@@ -32,7 +32,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/denoland/denokv.git",
+    "url": "git+https://github.com/Akimotorakiyu/denokv.git",
     "directory": "npm/napi"
   },
   "libc": [

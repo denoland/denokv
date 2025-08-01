@@ -1,3 +1,8 @@
+# NOTICE
+
+This file is a fork of the denokv repository.
+Relaxed restrictions on keys and values in denokv, recommended for local use only.
+
 # denokv
 
 A self-hosted backend for [Deno KV](https://deno.com/kv), the JavaScript first key-value database:

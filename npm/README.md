@@ -1,3 +1,12 @@
+# NOTICE
+
+This Repo is a fork of the denokv repository.
+Relaxed restrictions on keys and values in denokv, recommended for local use only.
+
+```sh
+npm i rakiyu-deno-kv
+```
+
 # `@deno/kv`
 
 ![https://github.com/denoland/denokv/actions](https://github.com/denoland/denokv/workflows/npm/badge.svg)
@@ -36,7 +45,7 @@ import { openKv } from "@deno/kv";
 
 // connect to the remote database
 const kv = await openKv(
-  "https://api.deno.com/databases/YOUR_DATABASE_ID/connect",
+  "https://api.deno.com/databases/YOUR_DATABASE_ID/connect"
 );
 // access token for auth is the value of environment variable DENO_KV_ACCESS_TOKEN by default
 
@@ -50,7 +59,7 @@ kv.close();
 // to provide an explicit access token, pass it as an additional option
 const kv2 = await openKv(
   "https://api.deno.com/databases/YOUR_DATABASE_ID/connect",
-  { accessToken: mySecretAccessToken },
+  { accessToken: mySecretAccessToken }
 );
 ```
 
@@ -147,8 +156,8 @@ const kv = await openKv("https://example.com/not-really-remote", {
 Pass the `debug` option to `console.log` additional debugging info:
 
 ```js
-const kv = await openKv("http://localhost:4512/", { 
-  debug: true
+const kv = await openKv("http://localhost:4512/", {
+  debug: true,
 });
 ```
 

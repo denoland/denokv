@@ -1,7 +1,11 @@
 # NOTICE
 
-This file is a fork of the denokv repository.
+This Repo is a fork of the denokv repository.
 Relaxed restrictions on keys and values in denokv, recommended for local use only.
+
+```sh
+npm i rakiyu-deno-kv
+```
 
 # denokv
 

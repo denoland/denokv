@@ -1,5 +1,5 @@
 {
-  "name": "@deno/kv-linux-x64-gnu",
+  "name": "rakiyu-deno-kv-linux-x64-gnu",
   "version": "0.0.0-local",
   "os": [
     "linux"

@@ -1,5 +1,5 @@
 {
-  "name": "@deno/kv",
+  "name": "rakiyu-deno-kv",
   "version": "0.0.0-local",
   "description": "A Deno KV client library optimized for Node.js",
   "main": "index.js",

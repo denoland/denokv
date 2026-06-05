@@ -49,6 +49,13 @@ struct MockState {
   /// endpoint always issues that token. Bumping this value simulates
   /// outstanding tokens going stale server-side.
   accepted_token: u64,
+  /// `expiresAt` offset applied to issued metadata. Negative values
+  /// issue metadata that is already expired.
+  ttl_secs: i64,
+  /// When set, metadata fetches beyond this count never complete,
+  /// pinning the published metadata at its current value while
+  /// keeping the refresh task alive (mid-fetch).
+  block_metadata_fetches_after: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -78,19 +85,33 @@ impl RemoteTransport for MockTransport {
     headers: HeaderMap,
     _body: Bytes,
   ) -> Result<(Url, StatusCode, Self::Response), JsErrorBox> {
-    let mut state = self.0.lock().unwrap();
     if url.host_str() == Some("metadata.example") {
-      state.metadata_fetches += 1;
-      let body = serde_json::json!({
-        "version": 3,
-        "databaseId": "11111111-2222-3333-4444-555555555555",
-        "endpoints": [{ "url": "http://data.example", "consistency": "strong" }],
-        "token": format!("tok-{}", state.accepted_token),
-        "expiresAt": (utc_now() + chrono::Duration::seconds(3600)).to_rfc3339(),
-      });
+      let body = {
+        let mut state = self.0.lock().unwrap();
+        state.metadata_fetches += 1;
+        if state
+          .block_metadata_fetches_after
+          .is_some_and(|limit| state.metadata_fetches > limit)
+        {
+          None
+        } else {
+          Some(serde_json::json!({
+            "version": 3,
+            "databaseId": "11111111-2222-3333-4444-555555555555",
+            "endpoints": [{ "url": "http://data.example", "consistency": "strong" }],
+            "token": format!("tok-{}", state.accepted_token),
+            "expiresAt": (utc_now() + chrono::Duration::seconds(state.ttl_secs)).to_rfc3339(),
+          }))
+        }
+      };
+      let Some(body) = body else {
+        futures::future::pending::<()>().await;
+        unreachable!();
+      };
       let response = MockResponse(Bytes::from(body.to_string()));
       return Ok((url, StatusCode::OK, response));
     }
+    let state = self.0.lock().unwrap();
 
     // Note: the double slash mirrors real KV Connect behavior; the
     // endpoint URL is normalized to have a trailing slash and the data
@@ -132,10 +153,21 @@ fn setup() -> (
   Remote<DummyPermissions, MockTransport>,
   Arc<Mutex<MockState>>,
 ) {
-  let state = Arc::new(Mutex::new(MockState {
+  setup_with(MockState {
     metadata_fetches: 0,
     accepted_token: 0,
-  }));
+    ttl_secs: 3600,
+    block_metadata_fetches_after: None,
+  })
+}
+
+fn setup_with(
+  state: MockState,
+) -> (
+  Remote<DummyPermissions, MockTransport>,
+  Arc<Mutex<MockState>>,
+) {
+  let state = Arc::new(Mutex::new(state));
   let metadata_endpoint = MetadataEndpoint {
     url: Url::parse("http://metadata.example/").unwrap(),
     access_token: "testtoken".to_string(),
@@ -210,6 +242,32 @@ async fn dropped_watch_stream_keeps_refresher_alive() {
 
   state.lock().unwrap().accepted_token += 1;
   snapshot_read(&remote).await.unwrap();
+  assert_eq!(metadata_fetches(&state), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn expired_metadata_forces_refresh_with_bounded_wait() {
+  // The server issues metadata that is already expired, and the
+  // refresh task's next fetch never completes (it immediately
+  // re-fetches because the published metadata is expired, and that
+  // second fetch blocks). The data path must detect the expired
+  // metadata, attempt a forced refresh, and after a bounded wait
+  // proceed with the token it has instead of hanging or failing.
+  let (remote, state) = setup_with(MockState {
+    metadata_fetches: 0,
+    accepted_token: 0,
+    ttl_secs: -1,
+    block_metadata_fetches_after: Some(1),
+  });
+
+  let start = tokio::time::Instant::now();
+  snapshot_read(&remote).await.unwrap();
+  // The forced refresh waited out its bounded timeout (5s) because no
+  // fresh metadata arrived, then fell back to the stale token, which
+  // the mock data path still accepts.
+  assert!(start.elapsed() >= Duration::from_secs(4));
+  // First fetch issued the expired metadata; the second is the
+  // blocked in-flight one.
   assert_eq!(metadata_fetches(&state), 2);
 }
 

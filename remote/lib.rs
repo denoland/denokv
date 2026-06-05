@@ -374,14 +374,19 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
           // An auth failure usually means the token went stale (the
           // server may apply clock leeway beyond `expires_at`, so the
           // expiry check above does not catch every case). Force a
-          // metadata refresh and retry once before giving up.
-          if matches!(
-            status,
-            StatusCode::BAD_REQUEST
-              | StatusCode::UNAUTHORIZED
-              | StatusCode::FORBIDDEN
-          ) && !refreshed_on_auth_error
-          {
+          // metadata refresh and retry once before giving up. 401/403
+          // are unambiguous; some servers report auth failures as 400
+          // (e.g. `invalidAuthorizationHeader`), so a 400 counts only
+          // when the response body implicates the authorization
+          // header, to avoid replaying genuinely malformed requests.
+          let is_auth_failure = match status {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => true,
+            StatusCode::BAD_REQUEST => {
+              body.to_lowercase().contains("authorization")
+            }
+            _ => false,
+          };
+          if is_auth_failure && !refreshed_on_auth_error {
             refreshed_on_auth_error = true;
             warn!(
               "KV Connect failed to call '{}' (status={}): {}; refreshing metadata and retrying",
@@ -468,7 +473,10 @@ async fn metadata_refresh_task<T: RemoteTransport>(
   refresh_now: Arc<Notify>,
 ) {
   // Sleep for the given duration, or until a refresh is explicitly
-  // requested via `refresh_now`, whichever comes first.
+  // requested via `refresh_now`, whichever comes first. Note: if a
+  // refresh request lands while a fetch is already in flight,
+  // `notify_one` stores a permit and the next `notified()` returns
+  // immediately, producing one redundant (but harmless) fetch.
   let sleep_or_refresh_now = |duration: Duration| {
     let refresh_now = refresh_now.clone();
     async move {

@@ -60,7 +60,6 @@ use hyper::client::HttpConnector;
 use hyper_proxy::Intercept;
 use hyper_proxy::Proxy;
 use hyper_proxy::ProxyConnector;
-use log::error;
 use log::info;
 use prost::DecodeError;
 use prost::Message;

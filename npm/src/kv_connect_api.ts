@@ -175,6 +175,7 @@ async function fetchProtobuf(
 ): Promise<Uint8Array | ReadableStream<Uint8Array>> {
   const headers = {
     authorization: `Bearer ${accessToken}`,
+    "content-type": "application/x-protobuf",
     ...(version === 1 ? { "x-transaction-domain-id": databaseId } : {
       "x-denokv-version": version.toString(),
       "x-denokv-database-id": databaseId,

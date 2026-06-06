@@ -102,10 +102,14 @@ struct Metadata {
 
 impl Metadata {
   pub fn headers(&self) -> HeaderMap {
-    let mut headers = HeaderMap::with_capacity(3);
+    let mut headers = HeaderMap::with_capacity(4);
     headers.insert(
       "authorization",
       format!("Bearer {}", self.token).try_into().unwrap(),
+    );
+    headers.insert(
+      "content-type",
+      HeaderValue::from_static("application/x-protobuf"),
     );
     match self.version {
       ProtocolVersion::V1 => {

@@ -4,6 +4,7 @@ use std::num::NonZeroU32;
 
 use crate::datapath as pb;
 use crate::AtomicWrite;
+use crate::AtomicWriteOutcome;
 use crate::Check;
 use crate::CommitResult;
 use crate::Enqueue;
@@ -260,12 +261,28 @@ impl From<Vec<ReadRangeOutput>> for pb::SnapshotReadOutput {
 impl From<Option<CommitResult>> for pb::AtomicWriteOutput {
   fn from(commit_result: Option<CommitResult>) -> pb::AtomicWriteOutput {
     match commit_result {
-      None => pb::AtomicWriteOutput {
-        status: pb::AtomicWriteStatus::AwCheckFailure as i32,
-        failed_checks: vec![], // todo!
-        ..Default::default()
-      },
-      Some(commit_result) => pb::AtomicWriteOutput {
+      None => AtomicWriteOutcome::CheckFailed {
+        failed_checks: vec![],
+      }
+      .into(),
+      Some(commit_result) => {
+        AtomicWriteOutcome::Committed(commit_result).into()
+      }
+    }
+  }
+}
+
+impl From<AtomicWriteOutcome> for pb::AtomicWriteOutput {
+  fn from(outcome: AtomicWriteOutcome) -> pb::AtomicWriteOutput {
+    match outcome {
+      AtomicWriteOutcome::CheckFailed { failed_checks } => {
+        pb::AtomicWriteOutput {
+          status: pb::AtomicWriteStatus::AwCheckFailure as i32,
+          failed_checks,
+          ..Default::default()
+        }
+      }
+      AtomicWriteOutcome::Committed(commit_result) => pb::AtomicWriteOutput {
         status: pb::AtomicWriteStatus::AwSuccess as i32,
         versionstamp: commit_result.versionstamp.to_vec(),
         ..Default::default()

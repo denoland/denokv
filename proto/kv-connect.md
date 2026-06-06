@@ -347,7 +347,7 @@ Protobuf message in the format `com.deno.kv.datapath.AtomicWriteResponse`. If
 the server is unable to perform the write because the database is not available
 from this server, the `status` field MUST be set to `AW_WRITE_DISABLED`. If a
 write operation fails due to a check conflict, the `status` field MUST be set to
-`AW_CHECK_FAILED`. If the write operation succeeds, the `status` field MUST be
+`AW_CHECK_FAILURE`. If the write operation succeeds, the `status` field MUST be
 set to `AW_SUCCESS`. If the request succeeds, the server MUST include the
 `versionstamp` field with the versionstamp of the write operation.
 
@@ -367,10 +367,10 @@ If the response has a `status` field set to `AW_WRITE_DISABLED`, the client
 SHOULD perform a metadata exchange with the server to get a new list of
 endpoints, and then retry the request.
 
-If the response has a `status` field set to `AW_CHECK_FAILED`, the client MUST
+If the response has a `status` field set to `AW_CHECK_FAILURE`, the client MUST
 return an error to the user indicating that the write operation failed due to a
 check conflict. The client SHOULD report the checks that failed to the user by
-interpereting the `check_failures` field of the response.
+interpreting the `failed_checks` field of the response.
 
 If the response has a `status` field set to `AW_UNDEFINED`, the client MUST
 return an error to the user indicating that the write operation failed due to an

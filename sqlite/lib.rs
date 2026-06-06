@@ -28,6 +28,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use deno_error::JsErrorBox;
 use denokv_proto::AtomicWrite;
+use denokv_proto::AtomicWriteOutcome;
 use denokv_proto::CommitResult;
 use denokv_proto::Database;
 use denokv_proto::QueueMessageHandle;
@@ -77,7 +78,7 @@ enum SqliteRequest {
   },
   AtomicWrite {
     write: AtomicWrite,
-    sender: oneshot::Sender<Result<Option<CommitResult>, SqliteBackendError>>,
+    sender: oneshot::Sender<Result<AtomicWriteOutcome, SqliteBackendError>>,
   },
   QueueDequeueMessage {
     sender: oneshot::Sender<DequeuedMessage>,
@@ -512,7 +513,7 @@ impl Sqlite {
   pub async fn atomic_write(
     &self,
     write: AtomicWrite,
-  ) -> Result<Option<CommitResult>, SqliteBackendError> {
+  ) -> Result<AtomicWriteOutcome, SqliteBackendError> {
     let (sender, receiver) = oneshot::channel();
     self
       .write_worker
@@ -644,7 +645,7 @@ impl Database for Sqlite {
     let res = Sqlite::atomic_write(self, write)
       .await
       .map_err(JsErrorBox::from_err)?;
-    Ok(res)
+    Ok(res.into())
   }
 
   async fn dequeue_next_message(

@@ -351,6 +351,28 @@ pub struct CommitResult {
   pub versionstamp: Versionstamp,
 }
 
+/// The outcome of an atomic write operation.
+#[derive(Debug)]
+pub enum AtomicWriteOutcome {
+  /// All checks passed and the write was committed.
+  Committed(CommitResult),
+  /// One or more checks failed and the write was not committed.
+  CheckFailed {
+    /// Indexes into the `checks` of the originating [`AtomicWrite`]
+    /// identifying the checks that failed.
+    failed_checks: Vec<u32>,
+  },
+}
+
+impl From<AtomicWriteOutcome> for Option<CommitResult> {
+  fn from(outcome: AtomicWriteOutcome) -> Option<CommitResult> {
+    match outcome {
+      AtomicWriteOutcome::Committed(commit_result) => Some(commit_result),
+      AtomicWriteOutcome::CheckFailed { .. } => None,
+    }
+  }
+}
+
 #[derive(Debug)]
 /// The message notifying about the status of a single key in a watch request.
 pub enum WatchKeyOutput {

@@ -289,6 +289,9 @@ function computeKvMutationMessage(
     expireAtMs: mut.type === "set" && typeof mut.expireIn === "number"
       ? (Date.now() + mut.expireIn).toString()
       : "0",
+    sumMin: new Uint8Array(),
+    sumMax: new Uint8Array(),
+    sumClamp: false,
   };
 }
 

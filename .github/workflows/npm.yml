@@ -74,7 +74,7 @@ jobs:
               brew install protobuf
               yarn build --target aarch64-apple-darwin
               strip -x *.node
-    name: stable - ${{ matrix.settings.target }} - node@18
+    name: stable - ${{ matrix.settings.target }} - node@22
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +82,7 @@ jobs:
         uses: actions/setup-node@v4
         if: ${{ !matrix.settings.docker }}
         with:
-          node-version: 18
+          node-version: 22
           cache: yarn
           cache-dependency-path: ./npm/napi/yarn.lock
       - name: Remove rust-toolchain.toml (conflicts with mac arm64 build)
@@ -118,7 +118,7 @@ jobs:
         uses: actions/setup-node@v4
         if: matrix.settings.target == 'i686-pc-windows-msvc'
         with:
-          node-version: 18
+          node-version: 22
           cache: yarn
           architecture: x86
           cache-dependency-path: ./npm/napi/yarn.lock
@@ -161,8 +161,8 @@ jobs:
             target: aarch64-apple-darwin
             node-arch: arm64
         node:
-          - '18'
-          - '20'
+          - '22'
+          - '24'
     runs-on: ${{ matrix.settings.host }}
     steps:
       - uses: actions/checkout@v4
@@ -196,8 +196,8 @@ jobs:
       fail-fast: false
       matrix:
         node:
-          - '18'
-          - '20'
+          - '22'
+          - '24'
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -230,8 +230,8 @@ jobs:
       fail-fast: false
       matrix:
         node:
-          - '18'
-          - '20'
+          - '22'
+          - '24'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -270,7 +270,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: yarn
           cache-dependency-path: ./npm/napi/yarn.lock
       - name: Install dependencies

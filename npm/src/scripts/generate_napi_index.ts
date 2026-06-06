@@ -113,6 +113,22 @@ switch (platform) {
           }
         }
         break
+      case 'arm64':
+        if (isMusl()) {
+            throw new Error(\`Unsupported architecture on Linux: \${arch} (musl)\`)
+        } else {
+          localFileExisted = existsSync(join(__dirname, '${napiArtifactName}.linux-arm64-gnu.node'))
+          try {
+            if (localFileExisted) {
+              nativeBinding = require('./${napiArtifactName}.linux-arm64-gnu.node')
+            } else {
+              nativeBinding = require('${napiPackageName}-linux-arm64-gnu')
+            }
+          } catch (e) {
+            loadError = e
+          }
+        }
+        break
       default:
         throw new Error(\`Unsupported architecture on Linux: \${arch}\`)
     }

@@ -51,6 +51,18 @@ jobs:
               apt-get -y install protobuf-compiler &&
               yarn build --target x86_64-unknown-linux-gnu &&
               strip *.node
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian-aarch64
+            build: |-
+              set -e &&
+              rustup install 1.96.0 &&
+              rustup default 1.96.0 &&
+              rustup target add aarch64-unknown-linux-gnu &&
+              apt-get update &&
+              apt-get -y install protobuf-compiler &&
+              yarn build --target aarch64-unknown-linux-gnu &&
+              aarch64-unknown-linux-gnu-strip *.node
           - host: macos-latest
             target: aarch64-apple-darwin
             build: |
@@ -176,6 +188,40 @@ jobs:
       - name: Test bindings
         run: yarn test
         working-directory: ./npm/napi
+  test-linux-arm64-gnu-binding:
+    name: Test bindings on Linux-arm64-gnu - node@${{ matrix.node }}
+    needs:
+      - build
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - '18'
+          - '20'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: yarn
+          cache-dependency-path: ./npm/napi/yarn.lock
+      - name: Install dependencies
+        run: yarn install
+        working-directory: ./npm/napi
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: bindings-aarch64-unknown-linux-gnu
+          path: ./npm/napi
+      - name: List packages
+        run: ls -R .
+        shell: bash
+        working-directory: ./npm/napi
+      - name: Test bindings
+        run: docker run --rm -v $(pwd):/build -w /build node:${{ matrix.node }}-slim yarn test
+        working-directory: ./npm/napi
   test-linux-x64-gnu-binding:
     name: Test bindings on Linux-x64-gnu - node@${{ matrix.node }}
     needs:
@@ -218,6 +264,7 @@ jobs:
     needs:
       - test-macOS-windows-binding
       - test-linux-x64-gnu-binding
+      - test-linux-arm64-gnu-binding
     steps:
       - uses: actions/checkout@v4
       - name: Setup node

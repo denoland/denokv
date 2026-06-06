@@ -152,6 +152,19 @@ const kv = await openKv("http://localhost:4512/", {
 });
 ```
 
+### Supported features
+
+| Feature                                       | sqlite | in-memory | remote (KV Connect) |
+| --------------------------------------------- | ------ | --------- | ------------------- |
+| `get` / `getMany` / `set` / `delete` / `list` | ✅     | ✅        | ✅                  |
+| `atomic()` (checks, `sum` / `min` / `max`)    | ✅     | ✅        | ✅                  |
+| Key expiration (`expireIn`)                   | ✅     | ✅        | ✅                  |
+| `watch`                                       | ✅     | ✅        | ✅                  |
+| `enqueue` / `listenQueue`                     | ✅     | ✅        | ❌                  |
+
+Queue operations are not part of the KV Connect protocol, so they are
+only available with a local (sqlite or in-memory) database.
+
 ### Backend-specific options
 
 Each implementation supports different additional options,

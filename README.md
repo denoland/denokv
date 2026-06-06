@@ -55,6 +55,22 @@ Deno KV backend built into the Deno CLI. You can open a temporary in memory KV
 database with `Deno.openKv(":memory:")` or a persistent database by specifying a
 path like `Deno.openKv("./my-database.sqlite")`.
 
+## Supported features
+
+All Deno KV operations are supported when connecting to `denokv` over KV
+Connect, with one exception: queues. The KV Connect protocol does not
+include queue operations, so `enqueue()` and `listenQueue()` only work
+with a local database (a path passed to `Deno.openKv()`, or the sqlite
+and in-memory backends of the [`@deno/kv` npm package](./npm/README.md)).
+
+| Feature                                          | Local database | KV Connect (`denokv` or Deno Deploy) |
+| ------------------------------------------------ | -------------- | ------------------------------------ |
+| `get` / `getMany` / `set` / `delete` / `list`    | ✅             | ✅                                   |
+| `atomic()` (checks, `sum` / `min` / `max`)       | ✅             | ✅                                   |
+| Key expiration (`expireIn`)                      | ✅             | ✅                                   |
+| `watch`                                          | ✅             | ✅                                   |
+| `enqueue` / `listenQueue`                        | ✅             | ❌ (not part of the protocol)        |
+
 ## How to run
 
 ### Docker on a VPS

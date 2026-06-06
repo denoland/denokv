@@ -46,6 +46,7 @@ use serde::Deserialize;
 use thiserror::Error;
 use time::utc_now;
 use tokio::sync::watch;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_util::codec::LengthDelimitedCodec;
 use tokio_util::io::StreamReader;
@@ -56,6 +57,9 @@ use denokv_proto::datapath as pb;
 
 const DATAPATH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const METADATA_BACKOFF_BASE: Duration = Duration::from_secs(5);
+// How long a data path call waits for a forced metadata refresh to
+// complete before proceeding with whatever metadata it has.
+const FORCED_REFRESH_WAIT: Duration = Duration::from_secs(5);
 
 pub struct MetadataEndpoint {
   pub url: Url,
@@ -226,11 +230,25 @@ pub enum CallDataError {
   Decode(#[source] prost::DecodeError),
 }
 
+/// Owns the background metadata refresh task. The task is aborted when
+/// this struct is dropped, which happens only when the last clone of
+/// the owning [`Remote`] is dropped (it is held in an [`Arc`]).
+struct MetadataRefresher {
+  refresh_now: Arc<Notify>,
+  handle: JoinHandle<()>,
+}
+
+impl Drop for MetadataRefresher {
+  fn drop(&mut self) {
+    self.handle.abort();
+  }
+}
+
 #[derive(Clone)]
 pub struct Remote<P: RemotePermissions, T: RemoteTransport> {
   permissions: P,
   client: T,
-  metadata_refresher: Arc<JoinHandle<()>>,
+  metadata_refresher: Arc<MetadataRefresher>,
   metadata: watch::Receiver<MetadataState>,
 }
 
@@ -241,17 +259,35 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
     metadata_endpoint: MetadataEndpoint,
   ) -> Self {
     let (tx, rx) = watch::channel(MetadataState::Pending);
-    let metadata_refresher = tokio::spawn(metadata_refresh_task(
+    let refresh_now = Arc::new(Notify::new());
+    let handle = tokio::spawn(metadata_refresh_task(
       client.clone(),
       metadata_endpoint,
       tx,
+      refresh_now.clone(),
     ));
     Self {
       client,
       permissions,
-      metadata_refresher: Arc::new(metadata_refresher),
+      metadata_refresher: Arc::new(MetadataRefresher {
+        refresh_now,
+        handle,
+      }),
       metadata: rx,
     }
+  }
+
+  /// Ask the refresh task to fetch fresh metadata immediately and wait
+  /// (bounded by [`FORCED_REFRESH_WAIT`]) for an update to be
+  /// published.
+  async fn force_refresh_metadata(&self) {
+    let mut metadata_rx = self.metadata.clone();
+    // Mark the current value as seen so `changed()` below waits for a
+    // genuinely new publication.
+    metadata_rx.borrow_and_update();
+    self.metadata_refresher.refresh_now.notify_one();
+    let _ =
+      tokio::time::timeout(FORCED_REFRESH_WAIT, metadata_rx.changed()).await;
   }
 
   async fn call_raw<Req: prost::Message>(
@@ -260,17 +296,37 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
     req: Req,
   ) -> Result<(T::Response, ProtocolVersion), CallRawError> {
     let attempt = 0;
+    let mut refreshed_on_expiry = false;
+    let mut refreshed_on_auth_error = false;
     let req_body = Bytes::from(req.encode_to_vec());
     loop {
       let metadata = loop {
         let mut metadata_rx = self.metadata.clone();
+        let mut expired = false;
         match &*metadata_rx.borrow() {
           MetadataState::Pending => {}
-          MetadataState::Ok(metadata) => break metadata.clone(),
+          MetadataState::Ok(metadata) => {
+            // Don't send a token that is known to have expired (e.g.
+            // because the process was suspended past the refresh
+            // deadline); force a refresh and re-check. If the refresh
+            // doesn't produce fresh metadata in time, proceed with
+            // what we have rather than hanging.
+            if metadata.expires_at <= utc_now() && !refreshed_on_expiry {
+              expired = true;
+            } else {
+              break metadata.clone();
+            }
+          }
           MetadataState::Error(e) => {
             return Err(CallRawError::Other(e.to_string()));
           }
         };
+        if expired {
+          refreshed_on_expiry = true;
+          debug!("KV Connect metadata expired, forcing refresh");
+          self.force_refresh_metadata().await;
+          continue;
+        }
         if metadata_rx.changed().await.is_err() {
           return Err(CallRawError::DatabaseClosed);
         }
@@ -315,6 +371,30 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
           let status = resp.1;
           let b = resp.2.bytes().await.unwrap_or_default();
           let body = String::from_utf8_lossy(&b);
+          // An auth failure usually means the token went stale (the
+          // server may apply clock leeway beyond `expires_at`, so the
+          // expiry check above does not catch every case). Force a
+          // metadata refresh and retry once before giving up. 401/403
+          // are unambiguous; some servers report auth failures as 400
+          // (e.g. `invalidAuthorizationHeader`), so a 400 counts only
+          // when the response body implicates the authorization
+          // header, to avoid replaying genuinely malformed requests.
+          let is_auth_failure = match status {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => true,
+            StatusCode::BAD_REQUEST => {
+              body.to_lowercase().contains("authorization")
+            }
+            _ => false,
+          };
+          if is_auth_failure && !refreshed_on_auth_error {
+            refreshed_on_auth_error = true;
+            warn!(
+              "KV Connect failed to call '{}' (status={}): {}; refreshing metadata and retrying",
+              url, status, body
+            );
+            self.force_refresh_metadata().await;
+            continue;
+          }
           return Err(CallRawError::CallFailed {
             url,
             status,
@@ -371,24 +451,42 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
   }
 }
 
-impl<P: RemotePermissions, T: RemoteTransport> Drop for Remote<P, T> {
-  fn drop(&mut self) {
-    self.metadata_refresher.abort();
-  }
-}
-
-async fn randomized_exponential_backoff(base: Duration, attempt: u64) {
+fn randomized_exponential_backoff_duration(
+  base: Duration,
+  attempt: u64,
+) -> Duration {
   let attempt = attempt.min(12);
   let delay = base.as_millis() as u64 + (2 << attempt);
   let delay = delay + rand::thread_rng().gen_range(0..(delay / 2) + 1);
-  tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+  std::time::Duration::from_millis(delay)
+}
+
+async fn randomized_exponential_backoff(base: Duration, attempt: u64) {
+  tokio::time::sleep(randomized_exponential_backoff_duration(base, attempt))
+    .await;
 }
 
 async fn metadata_refresh_task<T: RemoteTransport>(
   client: T,
   metadata_endpoint: MetadataEndpoint,
   tx: watch::Sender<MetadataState>,
+  refresh_now: Arc<Notify>,
 ) {
+  // Sleep for the given duration, or until a refresh is explicitly
+  // requested via `refresh_now`, whichever comes first. Note: if a
+  // refresh request lands while a fetch is already in flight,
+  // `notify_one` stores a permit and the next `notified()` returns
+  // immediately, producing one redundant (but harmless) fetch.
+  let sleep_or_refresh_now = |duration: Duration| {
+    let refresh_now = refresh_now.clone();
+    async move {
+      tokio::select! {
+        _ = tokio::time::sleep(duration) => {}
+        _ = refresh_now.notified() => {}
+      }
+    }
+  };
+
   let mut attempts = 0;
   loop {
     let res = fetch_metadata(&client, &metadata_endpoint).await;
@@ -410,7 +508,7 @@ async fn metadata_refresh_task<T: RemoteTransport>(
           .unwrap_or_default()
           .min(Duration::from_secs(60));
 
-        tokio::time::sleep(sleep_time).await;
+        sleep_or_refresh_now(sleep_time).await;
       }
       RetryableResult::Retry => {
         attempts += 1;
@@ -418,7 +516,15 @@ async fn metadata_refresh_task<T: RemoteTransport>(
           // The receiver has been dropped, so we can stop now.
           return;
         }
-        randomized_exponential_backoff(METADATA_BACKOFF_BASE, attempts).await;
+        // Wake any task waiting on a forced refresh; the metadata
+        // value is unchanged, but waiters should re-evaluate rather
+        // than block until their timeout.
+        tx.send_modify(|_| {});
+        sleep_or_refresh_now(randomized_exponential_backoff_duration(
+          METADATA_BACKOFF_BASE,
+          attempts,
+        ))
+        .await;
       }
       RetryableResult::Err(err) => {
         attempts += 1;
@@ -426,7 +532,11 @@ async fn metadata_refresh_task<T: RemoteTransport>(
           // The receiver has been dropped, so we can stop now.
           return;
         }
-        randomized_exponential_backoff(METADATA_BACKOFF_BASE, attempts).await;
+        sleep_or_refresh_now(randomized_exponential_backoff_duration(
+          METADATA_BACKOFF_BASE,
+          attempts,
+        ))
+        .await;
       }
     }
   }

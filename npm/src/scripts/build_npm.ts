@@ -140,6 +140,40 @@ await build({
         newContents,
       );
     }
+
+    // Smoke test the built package with node on a machine without a
+    // napi binding (the out dir never contains the platform packages):
+    // importing must succeed, the in-memory implementation must work,
+    // and the napi path must fail with the binding load error attached
+    // as the cause (#99).
+    console.log("smoke testing the built package");
+    const smokeTest = `
+(async () => {
+  const assert = require('assert').strict;
+  const { pathToFileURL } = require('url');
+  const esm = await import(pathToFileURL(${
+      JSON.stringify(join(outDir, "esm", "npm.js"))
+    }));
+  const cjs = require(${JSON.stringify(join(outDir, "script", "npm.js"))});
+  for (const { openKv } of [esm, cjs]) {
+    const kv = await openKv(undefined, { implementation: 'in-memory' });
+    await kv.set(['a'], 1);
+    assert.equal((await kv.get(['a'])).value, 1);
+    kv.close();
+    await assert.rejects(
+      () => openKv('./smoke-test.sqlite'),
+      (e) =>
+        /No default napi interface/.test(e.message) &&
+        e.cause !== undefined,
+    );
+  }
+  console.log('smoke test ok');
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+`;
+    await run({ command: "node", args: ["-e", smokeTest] });
   },
 });
 

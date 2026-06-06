@@ -82,7 +82,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
+      - name: Require main for real releases
+        if: env.DRY_RUN == '' && github.ref != 'refs/heads/main'
+        run: |-
+          echo "real releases must be dispatched from main (got $GITHUB_REF)"
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -128,3 +135,9 @@ jobs:
             --title "$VERSION" \
             --notes-file notes.md \
             artifacts/*.zip
+          # Tag pushes made with the workflow token do not trigger the
+          # tag-triggered workflows, so dispatch the publishes directly
+          # against the new tag.
+          gh workflow run ci.yml --ref "$VERSION"
+          gh workflow run npm.yml --ref "$VERSION"
+          gh workflow run docker.yml --ref "$VERSION"

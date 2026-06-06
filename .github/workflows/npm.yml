@@ -4,6 +4,7 @@ env:
   APP_NAME: deno-kv-napi
   MACOSX_DEPLOYMENT_TARGET: '10.13'
 'on':
+  workflow_dispatch: null
   push:
     branches:
       - main

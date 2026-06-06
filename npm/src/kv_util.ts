@@ -1,6 +1,6 @@
 // Copyright 2023 the Deno authors. All rights reserved. MIT license.
 
-import { decodeHex, encodeHex } from "./bytes.ts";
+import { compareBytes, decodeHex, encodeHex, equalBytes } from "./bytes.ts";
 import {
   checkExpireIn,
   checkKeyNotEmpty,
@@ -22,6 +22,7 @@ import {
   KvListSelector,
   KvMutation,
 } from "./kv_types.ts";
+import { packKey } from "./kv_key.ts";
 import { _KvU64 } from "./kv_u64.ts";
 import { defer, Deferred } from "./proto/runtime/async/observer.ts";
 import {
@@ -99,13 +100,50 @@ export function unpackCursor(str: string): Cursor {
   throw new Error(`Invalid cursor`);
 }
 
-export function checkListSelector(selector: KvListSelector) {
+export function checkListSelector(selector: KvListSelector): KvListSelector {
   if (!isRecord(selector)) {
     throw new TypeError(`Bad selector: ${JSON.stringify(selector)}`);
   }
-  if ("prefix" in selector && "start" in selector && "end" in selector) {
+  const { prefix, start, end } = selector as {
+    prefix?: KvKey;
+    start?: KvKey;
+    end?: KvKey;
+  };
+  if (prefix !== undefined) {
+    if (start !== undefined && end !== undefined) {
+      throw new TypeError(
+        `Selector can not specify both 'start' and 'end' key when specifying 'prefix'`,
+      );
+    }
+    if (start !== undefined) {
+      checkKeyInPrefixKeyspace(start, prefix, "Start");
+      return { prefix, start };
+    }
+    if (end !== undefined) {
+      checkKeyInPrefixKeyspace(end, prefix, "End");
+      return { prefix, end };
+    }
+    return { prefix };
+  }
+  if (start !== undefined && end !== undefined) {
+    if (compareBytes(packKey(start), packKey(end)) > 0) {
+      throw new TypeError(`Start key is greater than end key`);
+    }
+    return { start, end };
+  }
+  throw new TypeError(
+    `Selector must specify either 'prefix' or both 'start' and 'end' key`,
+  );
+}
+
+function checkKeyInPrefixKeyspace(key: KvKey, prefix: KvKey, which: string) {
+  const keyBytes = packKey(key);
+  const prefixBytes = packKey(prefix);
+  const inKeyspace = keyBytes.length > prefixBytes.length &&
+    equalBytes(keyBytes.subarray(0, prefixBytes.length), prefixBytes);
+  if (!inKeyspace) {
     throw new TypeError(
-      `Selector can not specify both 'start' and 'end' key when specifying 'prefix'`,
+      `${which} key is not in the keyspace defined by prefix`,
     );
   }
 }
@@ -331,7 +369,7 @@ export abstract class BaseKv implements Kv {
     options: KvListOptions = {},
   ): KvListIterator<T> {
     this.checkOpen("list");
-    checkListSelector(selector);
+    selector = checkListSelector(selector);
     options = checkListOptions(options);
     const outCursor = new CursorHolder();
     const generator: AsyncGenerator<KvEntry<T>> = this.listStream(

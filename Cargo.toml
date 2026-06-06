@@ -21,7 +21,7 @@ aws-config = { version = "1.8", default-features = false, features = ["behavior-
 aws-sdk-s3 = { version = "1.135", default-features = false, features = ["rt-tokio"] }
 aws-smithy-http-client = { version = "1.1.13", features = ["rustls-ring"] }
 aws-smithy-runtime-api = "1"
-axum = { version = "0.6", features = ["macros", "http2"] }
+axum = { version = "0.8", features = ["macros", "http2"] }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 clap = { version = "4", features = ["derive", "env"] }

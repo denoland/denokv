@@ -10,10 +10,8 @@ use aws_smithy_http_client::tls;
 use aws_smithy_http_client::Connector;
 use aws_smithy_runtime_api::client::http::http_client_fn;
 use aws_smithy_runtime_api::client::http::SharedHttpConnector;
-use axum::async_trait;
 use axum::body::Body;
 use axum::body::Bytes;
-use axum::body::StreamBody;
 use axum::debug_handler;
 use axum::extract::FromRequest;
 use axum::extract::State;
@@ -252,9 +250,9 @@ async fn run_serve(
     .context("Failed to start server")?;
   info!("Listening on http://{}", listener.local_addr().unwrap());
 
-  axum::Server::from_tcp(listener)?
-    .serve(app.into_make_service())
-    .await?;
+  listener.set_nonblocking(true)?;
+  let listener = tokio::net::TcpListener::from_std(listener)?;
+  axum::serve(listener, app).await?;
 
   Ok(())
 }
@@ -375,9 +373,9 @@ fn open_sqlite(
 async fn metadata_endpoint(
   State(state): State<AppState>,
   headers: HeaderMap,
-  maybe_req: Option<Json<MetadataExchangeRequest>>,
+  body: Bytes,
 ) -> Result<Json<DatabaseMetadata>, ApiError> {
-  let Some(Json(req)) = maybe_req else {
+  let Ok(req) = serde_json::from_slice::<MetadataExchangeRequest>(&body) else {
     return Err(ApiError::MinumumProtocolVersion);
   };
   let version = if req.supported_versions.contains(&3) {
@@ -417,7 +415,7 @@ async fn metadata_endpoint(
 async fn authentication_middleware(
   State(state): State<AppState>,
   req: Request<Body>,
-  next: Next<Body>,
+  next: Next,
 ) -> Result<Response, ApiError> {
   let Some(protocol_version) = req
     .headers()
@@ -514,7 +512,7 @@ async fn watch_endpoint(
     Bytes::from([&(data.len() as u32).to_le_bytes()[..], &data[..]].concat())
   });
 
-  let mut res = StreamBody::new(body_stream).into_response();
+  let mut res = Body::from_stream(body_stream).into_response();
   res
     .headers_mut()
     .insert("content-type", "application/octet-stream".parse().unwrap());
@@ -703,8 +701,7 @@ impl<T: prost::Message> IntoResponse for Protobuf<T> {
   }
 }
 
-#[async_trait]
-impl<S: Send + Sync, T: prost::Message + Default> FromRequest<S, Body>
+impl<S: Send + Sync, T: prost::Message + Default> FromRequest<S>
   for Protobuf<T>
 {
   type Rejection = Response;

@@ -12,6 +12,7 @@ import {
   KvKey,
   KvListOptions,
   KvListSelector,
+  KvMutation,
 } from "./kv_types.ts";
 import {
   BaseKv,
@@ -19,7 +20,6 @@ import {
   DecodeV8,
   EncodeV8,
   Enqueue,
-  KvMutation,
   packCursor,
   packKvValue,
   readValue,

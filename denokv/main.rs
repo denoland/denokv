@@ -1,15 +1,17 @@
 use std::borrow::Cow;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
 
 use anyhow::Context;
-use aws_smithy_async::rt::sleep::TokioSleep;
-use aws_smithy_types::retry::RetryConfig;
-use axum::async_trait;
+use aws_config::retry::RetryConfig;
+use aws_config::BehaviorVersion;
+use aws_smithy_http_client::proxy::ProxyConfig;
+use aws_smithy_http_client::tls;
+use aws_smithy_http_client::Connector;
+use aws_smithy_runtime_api::client::http::http_client_fn;
+use aws_smithy_runtime_api::client::http::SharedHttpConnector;
 use axum::body::Body;
 use axum::body::Bytes;
-use axum::body::StreamBody;
 use axum::debug_handler;
 use axum::extract::FromRequest;
 use axum::extract::State;
@@ -56,11 +58,6 @@ use futures::stream::unfold;
 use futures::stream_select;
 use futures::StreamExt;
 use futures::TryStreamExt;
-use hyper::client::HttpConnector;
-use hyper_proxy::Intercept;
-use hyper_proxy::Proxy;
-use hyper_proxy::ProxyConnector;
-use log::error;
 use log::info;
 use prost::DecodeError;
 use prost::Message;
@@ -253,9 +250,9 @@ async fn run_serve(
     .context("Failed to start server")?;
   info!("Listening on http://{}", listener.local_addr().unwrap());
 
-  axum::Server::from_tcp(listener)?
-    .serve(app.into_make_service())
-    .await?;
+  listener.set_nonblocking(true)?;
+  let listener = tokio::net::TcpListener::from_std(listener)?;
+  axum::serve(listener, app).await?;
 
   Ok(())
 }
@@ -266,8 +263,7 @@ async fn run_sync(
   continuous: bool,
   initial_sync_ok_tx: Option<oneshot::Sender<()>>,
 ) -> anyhow::Result<()> {
-  let mut s3_config = aws_config::from_env()
-    .sleep_impl(Arc::new(TokioSleep::new()))
+  let mut s3_config = aws_config::defaults(BehaviorVersion::latest())
     .retry_config(RetryConfig::standard().with_max_attempts(u32::MAX));
 
   if let Some(endpoint) = &options.s3_endpoint {
@@ -277,18 +273,32 @@ async fn run_sync(
   let https_proxy = env::var("https_proxy")
     .or_else(|_| env::var("HTTPS_PROXY"))
     .ok();
-  if let Some(https_proxy) = https_proxy {
-    let proxy = {
-      let proxy_uri = https_proxy.parse().unwrap();
-      let proxy = Proxy::new(Intercept::All, proxy_uri);
-      let connector = HttpConnector::new();
-      ProxyConnector::from_proxy_unsecured(connector, proxy)
-    };
-    let hyper_client =
-      aws_smithy_client::hyper_ext::Adapter::builder().build(proxy);
-
-    s3_config = s3_config.http_connector(hyper_client);
-  }
+  let proxy_config = match &https_proxy {
+    Some(https_proxy) => ProxyConfig::all(https_proxy)
+      .map_err(|e| anyhow::anyhow!("invalid https_proxy: {e}"))?,
+    None => ProxyConfig::disabled(),
+  };
+  let connector_cache = std::sync::Mutex::new(std::collections::HashMap::new());
+  let http_client = http_client_fn(move |settings, components| {
+    connector_cache
+      .lock()
+      .unwrap()
+      .entry((settings.connect_timeout(), settings.read_timeout()))
+      .or_insert_with(|| {
+        let mut builder = Connector::builder()
+          .connector_settings(settings.clone())
+          .proxy_config(proxy_config.clone())
+          .tls_provider(tls::Provider::Rustls(
+            tls::rustls_provider::CryptoMode::Ring,
+          ));
+        if let Some(sleep) = components.sleep_impl() {
+          builder = builder.sleep_impl(sleep);
+        }
+        SharedHttpConnector::new(builder.build())
+      })
+      .clone()
+  });
+  s3_config = s3_config.http_client(http_client);
 
   let s3_config = s3_config.load().await;
   let s3_client = aws_sdk_s3::Client::new(&s3_config);
@@ -363,9 +373,9 @@ fn open_sqlite(
 async fn metadata_endpoint(
   State(state): State<AppState>,
   headers: HeaderMap,
-  maybe_req: Option<Json<MetadataExchangeRequest>>,
+  body: Bytes,
 ) -> Result<Json<DatabaseMetadata>, ApiError> {
-  let Some(Json(req)) = maybe_req else {
+  let Ok(req) = serde_json::from_slice::<MetadataExchangeRequest>(&body) else {
     return Err(ApiError::MinumumProtocolVersion);
   };
   let version = if req.supported_versions.contains(&3) {
@@ -405,7 +415,7 @@ async fn metadata_endpoint(
 async fn authentication_middleware(
   State(state): State<AppState>,
   req: Request<Body>,
-  next: Next<Body>,
+  next: Next,
 ) -> Result<Response, ApiError> {
   let Some(protocol_version) = req
     .headers()
@@ -502,7 +512,7 @@ async fn watch_endpoint(
     Bytes::from([&(data.len() as u32).to_le_bytes()[..], &data[..]].concat())
   });
 
-  let mut res = StreamBody::new(body_stream).into_response();
+  let mut res = Body::from_stream(body_stream).into_response();
   res
     .headers_mut()
     .insert("content-type", "application/octet-stream".parse().unwrap());
@@ -691,8 +701,7 @@ impl<T: prost::Message> IntoResponse for Protobuf<T> {
   }
 }
 
-#[async_trait]
-impl<S: Send + Sync, T: prost::Message + Default> FromRequest<S, Body>
+impl<S: Send + Sync, T: prost::Message + Default> FromRequest<S>
   for Protobuf<T>
 {
   type Rejection = Response;

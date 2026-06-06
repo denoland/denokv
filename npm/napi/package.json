@@ -72,6 +72,9 @@
     "prettier": "^3.0.3",
     "typescript": "^5.2.2"
   },
+  "resolutions": {
+    "node-gyp": "^11"
+  },
   "lint-staged": {
     "*.@(js|ts|tsx)": [
       "eslint -c .eslintrc.yml --fix"

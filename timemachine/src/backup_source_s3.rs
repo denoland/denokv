@@ -108,7 +108,7 @@ impl DatabaseBackupSource for DatabaseBackupSourceS3 {
         });
       }
 
-      if list_objects_output.is_truncated {
+      if list_objects_output.is_truncated.unwrap_or_default() {
         continuation_token = list_objects_output.next_continuation_token;
       } else {
         break;

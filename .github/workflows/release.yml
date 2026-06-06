@@ -1,0 +1,130 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 0.14.0)"
+        required: true
+        type: string
+      dry-run:
+        description: "Build everything but push and release nothing"
+        type: boolean
+        default: false
+  # Exercise the whole flow as a dry run when the release machinery
+  # itself changes.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "scripts/release.sh"
+
+env:
+  VERSION: ${{ inputs.version || '0.0.0-test' }}
+  DRY_RUN: ${{ (github.event_name == 'pull_request' || inputs.dry-run) && '1' || '' }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - host: macos-latest
+            target: x86_64-apple-darwin
+          - host: macos-latest
+            target: aarch64-apple-darwin
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+    name: build ${{ matrix.settings.target }}
+    runs-on: ${{ matrix.settings.host }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dsherret/rust-toolchain-file@v1
+
+      - name: Add target
+        run: rustup target add ${{ matrix.settings.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.settings.target }}
+
+      - name: Bump version
+        run: ./scripts/release.sh bump "$VERSION"
+        shell: bash
+
+      - name: Build
+        run: cargo build --release -p denokv --target ${{ matrix.settings.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |-
+          cd target/${{ matrix.settings.target }}/release
+          zip -r denokv-${{ matrix.settings.target }}.zip denokv
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        run: |-
+          Compress-Archive -CompressionLevel Optimal -Force -Path target/${{ matrix.settings.target }}/release/denokv.exe -DestinationPath target/${{ matrix.settings.target }}/release/denokv-${{ matrix.settings.target }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: denokv-${{ matrix.settings.target }}.zip
+          path: target/${{ matrix.settings.target }}/release/denokv-${{ matrix.settings.target }}.zip
+          if-no-files-found: error
+
+  release:
+    name: release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dsherret/rust-toolchain-file@v1
+
+      - name: Bump version and commit
+        shell: bash
+        run: |-
+          ./scripts/release.sh bump "$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u
+          git commit -m "chore: release $VERSION"
+
+      - name: Generate release notes
+        shell: bash
+        run: |-
+          ./scripts/release.sh notes "$VERSION" | tee notes.md
+          {
+            echo "## ${DRY_RUN:+dry run: }release $VERSION"
+            echo
+            cat notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Push and release
+        if: env.DRY_RUN == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |-
+          git push origin HEAD:main
+          git tag "$VERSION"
+          git push origin "refs/tags/$VERSION"
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --notes-file notes.md \
+            artifacts/*.zip

@@ -643,7 +643,10 @@ export async function endToEnd(
       kv.listenQueue((v) => {
         received.push(v);
       });
-      await sleep(napi ? 1000 : type === "deno" ? 100 : 50);
+      const deadline = Date.now() + 10_000;
+      while (received.length === 0 && Date.now() < deadline) {
+        await sleep(25);
+      }
       assertEquals(received, ["later"]);
 
       kv.close();

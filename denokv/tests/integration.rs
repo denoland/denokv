@@ -748,3 +748,76 @@ async fn read_key_1<P: RemotePermissions, T: RemoteTransport>(
   assert_eq!(range.entries[0].key, vec![1]);
   range.entries.into_iter().next().unwrap()
 }
+
+#[tokio::test]
+async fn atomic_write_reports_failed_checks() {
+  let (_child, addr) = start_server().await;
+  let client = ReqwestClient(reqwest::Client::new());
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
+
+  let metadata_endpoint = denokv_remote::MetadataEndpoint {
+    url,
+    access_token: ACCESS_TOKEN.to_string(),
+  };
+
+  let remote =
+    denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
+
+  remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key: vec![1],
+        kind: denokv_proto::MutationKind::Set(denokv_proto::KvValue::U64(1)),
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+
+  // The first and third checks expect the (existing) key [1] to be
+  // absent and must fail; the second check expects the absent key [2]
+  // to be absent and must pass.
+  let write = denokv_proto::datapath::AtomicWrite {
+    checks: vec![
+      denokv_proto::datapath::Check {
+        key: vec![1],
+        versionstamp: vec![],
+      },
+      denokv_proto::datapath::Check {
+        key: vec![2],
+        versionstamp: vec![],
+      },
+      denokv_proto::datapath::Check {
+        key: vec![1],
+        versionstamp: vec![],
+      },
+    ],
+    mutations: vec![],
+    enqueues: vec![],
+  };
+
+  let response = reqwest::Client::new()
+    .post(format!("http://localhost:{}/v2/atomic_write", addr.port()))
+    .header("authorization", format!("Bearer {ACCESS_TOKEN}"))
+    .header("x-denokv-version", "3")
+    .header(
+      "x-denokv-database-id",
+      "00000000-0000-0000-0000-000000000000",
+    )
+    .body(prost::Message::encode_to_vec(&write))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), 200);
+  let output: denokv_proto::datapath::AtomicWriteOutput =
+    prost::Message::decode(response.bytes().await.unwrap()).unwrap();
+
+  assert_eq!(
+    output.status(),
+    denokv_proto::datapath::AtomicWriteStatus::AwCheckFailure
+  );
+  assert_eq!(output.failed_checks, vec![0, 2]);
+}

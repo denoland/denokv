@@ -11,6 +11,7 @@ use denokv_proto::decode_value;
 use denokv_proto::encode_value;
 use denokv_proto::encode_value_owned;
 use denokv_proto::AtomicWrite;
+use denokv_proto::AtomicWriteOutcome;
 use denokv_proto::CommitResult;
 use denokv_proto::KvEntry;
 use denokv_proto::KvValue;
@@ -278,7 +279,7 @@ impl SqliteBackend {
   pub fn atomic_write_batched(
     &mut self,
     writes: Vec<AtomicWrite>,
-  ) -> Vec<Result<Option<CommitResult>, SqliteBackendError>> {
+  ) -> Vec<Result<AtomicWriteOutcome, SqliteBackendError>> {
     if self.readonly {
       return writes
         .iter()
@@ -325,7 +326,7 @@ impl SqliteBackend {
     }
 
     for (write, commit_result) in writes.iter().zip(commit_results.iter()) {
-      if let Ok(Some(commit_result)) = &commit_result {
+      if let Ok(AtomicWriteOutcome::Committed(commit_result)) = &commit_result {
         for mutation in &write.mutations {
           self
             .notifier
@@ -341,16 +342,20 @@ impl SqliteBackend {
     tx: &mut rusqlite::Transaction,
     rng: &mut dyn RngCore,
     write: &AtomicWrite,
-  ) -> Result<(bool, Option<CommitResult>), SqliteBackendError> {
-    for check in &write.checks {
+  ) -> Result<(bool, AtomicWriteOutcome), SqliteBackendError> {
+    let mut failed_checks = Vec::new();
+    for (index, check) in write.checks.iter().enumerate() {
       let real_versionstamp = tx
         .prepare_cached(STATEMENT_KV_POINT_GET_VERSION_ONLY)?
         .query_row([check.key.as_slice()], |row| row.get(0))
         .optional()?
         .map(version_to_versionstamp);
       if real_versionstamp != check.versionstamp {
-        return Ok((false, None));
+        failed_checks.push(index as u32);
       }
+    }
+    if !failed_checks.is_empty() {
+      return Ok((false, AtomicWriteOutcome::CheckFailed { failed_checks }));
     }
 
     let incrementer_count = rng.gen_range(1..10);
@@ -470,7 +475,7 @@ impl SqliteBackend {
 
     Ok((
       has_enqueues,
-      Some(CommitResult {
+      AtomicWriteOutcome::Committed(CommitResult {
         versionstamp: new_versionstamp,
       }),
     ))

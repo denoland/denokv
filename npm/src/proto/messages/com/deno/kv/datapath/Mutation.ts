@@ -39,6 +39,9 @@ export declare namespace $.com.deno.kv.datapath {
     value?: KvValue;
     mutationType: MutationType;
     expireAtMs: string;
+    sumMin: Uint8Array;
+    sumMax: Uint8Array;
+    sumClamp: boolean;
   }
 }
 
@@ -50,6 +53,9 @@ export function getDefaultValue(): $.com.deno.kv.datapath.Mutation {
     value: undefined,
     mutationType: "M_UNSPECIFIED",
     expireAtMs: "0",
+    sumMin: new Uint8Array(),
+    sumMax: new Uint8Array(),
+    sumClamp: false,
   };
 }
 
@@ -66,6 +72,9 @@ export function encodeJson(value: $.com.deno.kv.datapath.Mutation): unknown {
   if (value.value !== undefined) result.value = encodeJson_1(value.value);
   if (value.mutationType !== undefined) result.mutationType = tsValueToJsonValueFns.enum(value.mutationType);
   if (value.expireAtMs !== undefined) result.expireAtMs = tsValueToJsonValueFns.int64(value.expireAtMs);
+  if (value.sumMin !== undefined) result.sumMin = tsValueToJsonValueFns.bytes(value.sumMin);
+  if (value.sumMax !== undefined) result.sumMax = tsValueToJsonValueFns.bytes(value.sumMax);
+  if (value.sumClamp !== undefined) result.sumClamp = tsValueToJsonValueFns.bool(value.sumClamp);
   return result;
 }
 
@@ -75,6 +84,9 @@ export function decodeJson(value: any): $.com.deno.kv.datapath.Mutation {
   if (value.value !== undefined) result.value = decodeJson_1(value.value);
   if (value.mutationType !== undefined) result.mutationType = jsonValueToTsValueFns.enum(value.mutationType) as MutationType;
   if (value.expireAtMs !== undefined) result.expireAtMs = jsonValueToTsValueFns.int64(value.expireAtMs);
+  if (value.sumMin !== undefined) result.sumMin = jsonValueToTsValueFns.bytes(value.sumMin);
+  if (value.sumMax !== undefined) result.sumMax = jsonValueToTsValueFns.bytes(value.sumMax);
+  if (value.sumClamp !== undefined) result.sumClamp = jsonValueToTsValueFns.bool(value.sumClamp);
   return result;
 }
 
@@ -102,6 +114,24 @@ export function encodeBinary(value: $.com.deno.kv.datapath.Mutation): Uint8Array
     const tsValue = value.expireAtMs;
     result.push(
       [4, tsValueToWireValueFns.int64(tsValue)],
+    );
+  }
+  if (value.sumMin !== undefined) {
+    const tsValue = value.sumMin;
+    result.push(
+      [5, tsValueToWireValueFns.bytes(tsValue)],
+    );
+  }
+  if (value.sumMax !== undefined) {
+    const tsValue = value.sumMax;
+    result.push(
+      [6, tsValueToWireValueFns.bytes(tsValue)],
+    );
+  }
+  if (value.sumClamp !== undefined) {
+    const tsValue = value.sumClamp;
+    result.push(
+      [7, tsValueToWireValueFns.bool(tsValue)],
     );
   }
   return serialize(result);
@@ -138,6 +168,27 @@ export function decodeBinary(binary: Uint8Array): $.com.deno.kv.datapath.Mutatio
     const value = wireValueToTsValueFns.int64(wireValue);
     if (value === undefined) break field;
     result.expireAtMs = value;
+  }
+  field: {
+    const wireValue = wireFields.get(5);
+    if (wireValue === undefined) break field;
+    const value = wireValueToTsValueFns.bytes(wireValue);
+    if (value === undefined) break field;
+    result.sumMin = value;
+  }
+  field: {
+    const wireValue = wireFields.get(6);
+    if (wireValue === undefined) break field;
+    const value = wireValueToTsValueFns.bytes(wireValue);
+    if (value === undefined) break field;
+    result.sumMax = value;
+  }
+  field: {
+    const wireValue = wireFields.get(7);
+    if (wireValue === undefined) break field;
+    const value = wireValueToTsValueFns.bool(wireValue);
+    if (value === undefined) break field;
+    result.sumClamp = value;
   }
   return result;
 }

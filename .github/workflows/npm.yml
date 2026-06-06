@@ -32,7 +32,7 @@ jobs:
             target: x86_64-apple-darwin
             build: |
               brew install protobuf
-              yarn build
+              yarn build --target x86_64-apple-darwin
               strip -x *.node
           - host: windows-latest
             build: |
@@ -144,6 +144,9 @@ jobs:
             target: x86_64-pc-windows-msvc
           - host: macos-latest
             target: x86_64-apple-darwin
+            node-arch: x64
+          - host: macos-latest
+            target: aarch64-apple-darwin
         node:
           - '18'
           - '20'
@@ -154,6 +157,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          architecture: ${{ matrix.settings.node-arch }}
           cache: yarn
           cache-dependency-path: ./npm/napi/yarn.lock
       - name: Install dependencies

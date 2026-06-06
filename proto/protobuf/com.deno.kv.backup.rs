@@ -10,7 +10,7 @@ pub struct BackupSnapshotRange {
   #[prost(message, repeated, tag = "2")]
   pub metadata_list: ::prost::alloc::vec::Vec<BackupKvPair>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BackupKvPair {
   #[prost(bytes = "vec", tag = "1")]
   pub key: ::prost::alloc::vec::Vec<u8>,
@@ -24,7 +24,7 @@ pub struct BackupMutationRange {
   #[prost(uint64, tag = "2")]
   pub timestamp_ms: u64,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BackupReplicationLogEntry {
   #[prost(bytes = "vec", tag = "1")]
   pub versionstamp: ::prost::alloc::vec::Vec<u8>,

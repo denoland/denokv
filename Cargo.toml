@@ -32,8 +32,8 @@ hex = "0.4"
 http = "1"
 log = "0.4.20"
 num-bigint = "0.4"
-prost = "0.13"
-prost-build = "0.13"
+prost = "0.14"
+prost-build = "0.14"
 rand = "0.8.5"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream"] }
 rusqlite = { version = "0.40.0", features = ["fallible_uint"] }

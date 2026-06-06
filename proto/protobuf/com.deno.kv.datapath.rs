@@ -33,7 +33,7 @@ pub struct SnapshotReadOutput {
 }
 /// A key range to read. The range is inclusive of the start and exclusive of the
 /// end.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReadRange {
   /// The first key to read.
   #[prost(bytes = "vec", tag = "1")]
@@ -70,7 +70,7 @@ pub struct AtomicWrite {
   #[prost(message, repeated, tag = "3")]
   pub enqueues: ::prost::alloc::vec::Vec<Enqueue>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AtomicWriteOutput {
   /// The status of the write.
   #[prost(enumeration = "AtomicWriteStatus", tag = "1")]
@@ -83,7 +83,7 @@ pub struct AtomicWriteOutput {
   pub failed_checks: ::prost::alloc::vec::Vec<u32>,
 }
 /// A mutation to perform.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Check {
   /// The key to check.
   #[prost(bytes = "vec", tag = "1")]
@@ -97,7 +97,7 @@ pub struct Check {
   pub versionstamp: ::prost::alloc::vec::Vec<u8>,
 }
 /// A mutation to perform.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Mutation {
   /// The key to mutate.
   #[prost(bytes = "vec", tag = "1")]
@@ -128,7 +128,7 @@ pub struct Mutation {
   #[prost(bool, tag = "7")]
   pub sum_clamp: bool,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct KvValue {
   #[prost(bytes = "vec", tag = "1")]
   pub data: ::prost::alloc::vec::Vec<u8>,
@@ -136,7 +136,7 @@ pub struct KvValue {
   pub encoding: i32,
 }
 /// A key-value entry.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct KvEntry {
   /// The key.
   #[prost(bytes = "vec", tag = "1")]
@@ -152,7 +152,7 @@ pub struct KvEntry {
   pub versionstamp: ::prost::alloc::vec::Vec<u8>,
 }
 /// A request to enqueue a message.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Enqueue {
   /// The payload of the message, encoded as a V8 ValueSerializer value.
   #[prost(bytes = "vec", tag = "1")]
@@ -193,14 +193,14 @@ pub struct WatchOutput {
   pub keys: ::prost::alloc::vec::Vec<WatchKeyOutput>,
 }
 /// A key to watch.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WatchKey {
   /// The key to watch.
   #[prost(bytes = "vec", tag = "1")]
   pub key: ::prost::alloc::vec::Vec<u8>,
 }
 /// The response to a watch request for a single key.
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WatchKeyOutput {
   /// Whether the value changed since the last watch delivery.
   #[prost(bool, tag = "1")]

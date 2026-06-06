@@ -82,7 +82,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
     steps:
       - name: Require main for real releases
         if: env.DRY_RUN == '' && github.ref != 'refs/heads/main'
@@ -90,9 +89,13 @@ jobs:
           echo "real releases must be dispatched from main (got $GITHUB_REF)"
           exit 1
 
+      # The deploy key both bypasses the main branch ruleset and, unlike
+      # the workflow token, produces pushes that trigger the
+      # tag-triggered publish workflows (ci, npm, docker).
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
 
       - name: Install Rust
         uses: dsherret/rust-toolchain-file@v1
@@ -136,21 +139,3 @@ jobs:
             --notes-file notes.md \
             artifacts/*.zip
 
-      # Tag pushes made with the workflow token do not trigger the
-      # tag-triggered workflows, so dispatch the publishes directly
-      # against the new tag. Attempt every dispatch even if one fails;
-      # a failed dispatch can be retried by hand from the Actions tab.
-      - name: Dispatch publish workflows
-        if: env.DRY_RUN == ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |-
-          failed=0
-          for workflow in ci.yml npm.yml docker.yml; do
-            if ! gh workflow run "$workflow" --ref "$VERSION"; then
-              echo "failed to dispatch $workflow"
-              failed=1
-            fi
-          done
-          exit "$failed"

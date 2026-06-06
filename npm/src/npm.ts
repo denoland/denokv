@@ -17,6 +17,7 @@ export * from "./napi_based.ts";
 export * from "./remote.ts";
 export * from "./in_memory.ts";
 export * from "./kv_types.ts";
+export { _KvU64 as KvU64 } from "./kv_u64.ts";
 export { makeLimitedV8Serializer, UnknownV8 } from "./v8.ts";
 
 export type KvImplementation = "in-memory" | "sqlite" | "remote";

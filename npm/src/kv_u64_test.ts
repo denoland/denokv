@@ -38,3 +38,19 @@ Deno.test({
       );
   },
 });
+
+Deno.test({
+  name: "KvU64 is exported from the package entrypoint",
+  fn: async () => {
+    const { KvU64, openKv } = await import("./npm.ts");
+    const u = new KvU64(5n);
+    assertEquals(u.value, 5n);
+
+    const kv = await openKv(undefined, { implementation: "in-memory" });
+    await kv.set(["u"], new KvU64(2n));
+    await kv.atomic().sum(["u"], 3n).commit();
+    const entry = await kv.get(["u"]);
+    assertEquals((entry.value as { value: bigint }).value, 5n);
+    kv.close();
+  },
+});

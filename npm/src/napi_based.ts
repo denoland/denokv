@@ -123,6 +123,7 @@ export function isNapiInterface(obj: unknown): obj is NapiInterface {
 
 //
 
+let DEFAULT_NAPI_INTERFACE_LOAD_ERROR: unknown;
 // deno-lint-ignore no-explicit-any
 const DEFAULT_NAPI_INTERFACE: any = undefined;
 
@@ -165,9 +166,14 @@ class NapiBasedKv extends ProtoBasedKv {
       throw new Error(`Invalid path: ${url}`);
     }
     if (napi === undefined) {
-      throw new Error(
+      const error = new Error(
         `No default napi interface, provide one via the 'napi' option.`,
       );
+      if (DEFAULT_NAPI_INTERFACE_LOAD_ERROR !== undefined) {
+        (error as { cause?: unknown }).cause =
+          DEFAULT_NAPI_INTERFACE_LOAD_ERROR;
+      }
+      throw error;
     }
     const dbId = napi.open(url, inMemory, debug);
     return new NapiBasedKv(debug, napi, dbId, decodeV8, encodeV8);

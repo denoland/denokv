@@ -109,9 +109,27 @@ await build({
       const oldContents = await Deno.readTextFile(
         join(outDir, subdir, "napi_based.js"),
       );
+      // Load the napi binding lazily-failing: platforms without a
+      // binding (e.g. Deno Deploy) must still be able to import the
+      // package and use the non-napi implementations. The load error
+      // is kept and surfaced only when the napi path is actually used.
       const insertion = subdir === "esm"
-        ? `await import('./${name}')`
-        : `require('./${name}')`;
+        ? `await (async () => {
+  try {
+    return await import('./${name}');
+  } catch (e) {
+    DEFAULT_NAPI_INTERFACE_LOAD_ERROR = e;
+    return undefined;
+  }
+})()`
+        : `(() => {
+  try {
+    return require('./${name}');
+  } catch (e) {
+    DEFAULT_NAPI_INTERFACE_LOAD_ERROR = e;
+    return undefined;
+  }
+})()`;
 
       const newContents = oldContents.replace(
         `const DEFAULT_NAPI_INTERFACE = undefined;`,

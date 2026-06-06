@@ -24,7 +24,6 @@ use num_bigint::BigInt;
 use rand::Rng;
 use rand::RngCore;
 use rusqlite::params;
-use rusqlite::DatabaseName;
 use rusqlite::OptionalExtension;
 use rusqlite::Transaction;
 use thiserror::Error;
@@ -184,7 +183,7 @@ impl SqliteBackend {
     rng: Box<dyn RngCore + Send>,
     force_readonly: bool,
   ) -> Result<Self, SqliteBackendError> {
-    let readonly = force_readonly || conn.is_readonly(DatabaseName::Main)?;
+    let readonly = force_readonly || conn.is_readonly("main")?;
     let mut this = Self {
       conn,
       rng,

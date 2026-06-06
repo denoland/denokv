@@ -108,7 +108,7 @@ impl DatabaseBackupSource for DatabaseBackupSourceS3 {
         });
       }
 
-      if list_objects_output.is_truncated {
+      if list_objects_output.is_truncated.unwrap_or_default() {
         continuation_token = list_objects_output.next_continuation_token;
       } else {
         break;
@@ -138,8 +138,7 @@ impl DatabaseBackupSource for DatabaseBackupSourceS3 {
       );
 
     if let Some(start_after) = &start_after {
-      builder =
-        builder.start_after(format!("{}{}.bin", list_prefix, start_after));
+      builder = builder.start_after(format!("{list_prefix}{start_after}.bin"));
     }
 
     let list_objects_output = builder.send().await?;

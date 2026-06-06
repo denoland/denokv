@@ -47,16 +47,8 @@ Deno.test({
     assertEquals(u.value, 5n);
 
     const kv = await openKv(undefined, { implementation: "in-memory" });
-    await kv.atomic().mutate({
-      type: "sum",
-      key: ["u"],
-      value: new KvU64(2n),
-    }).commit();
-    await kv.atomic().mutate({
-      type: "sum",
-      key: ["u"],
-      value: new KvU64(3n),
-    }).commit();
+    await kv.set(["u"], new KvU64(2n));
+    await kv.atomic().sum(["u"], 3n).commit();
     const entry = await kv.get(["u"]);
     assertEquals((entry.value as { value: bigint }).value, 5n);
     kv.close();

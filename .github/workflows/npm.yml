@@ -263,6 +263,7 @@ jobs:
     needs:
       - test-macOS-windows-binding
       - test-linux-x64-gnu-binding
+      - test-linux-arm64-gnu-binding
     steps:
       - uses: actions/checkout@v4
       - name: Setup node

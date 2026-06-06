@@ -25,8 +25,8 @@ axum = { version = "0.8", features = ["macros", "http2"] }
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 clap = { version = "4", features = ["derive", "env"] }
-constant_time_eq = "0.3"
-env_logger = "0.10.0"
+constant_time_eq = "0.5"
+env_logger = "0.11"
 futures = "0.3.28"
 hex = "0.4"
 http = "1"

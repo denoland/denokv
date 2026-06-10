@@ -13,6 +13,10 @@ use aws_smithy_runtime_api::client::http::SharedHttpConnector;
 use axum::body::Body;
 use axum::body::Bytes;
 use axum::debug_handler;
+use axum::extract::ws::CloseFrame;
+use axum::extract::ws::Message as WsMessage;
+use axum::extract::ws::WebSocket;
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::FromRequest;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -22,6 +26,7 @@ use axum::middleware;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
@@ -46,6 +51,7 @@ use denokv_proto::EndpointInfo;
 use denokv_proto::MetadataExchangeRequest;
 use denokv_proto::ReadRange;
 use denokv_proto::SnapshotReadOptions;
+use denokv_proto::WatchKeyOutput;
 use denokv_sqlite::Connection;
 use denokv_sqlite::Sqlite;
 use denokv_sqlite::SqliteBackendError;
@@ -235,6 +241,7 @@ async fn run_serve(
     .route("/snapshot_read", post(snapshot_read_endpoint))
     .route("/atomic_write", post(atomic_write_endpoint))
     .route("/watch", post(watch_endpoint))
+    .route("/watch_channel", get(watch_channel_endpoint))
     .route_layer(middleware::from_fn_with_state(
       state.clone(),
       authentication_middleware,
@@ -378,7 +385,9 @@ async fn metadata_endpoint(
   let Ok(req) = serde_json::from_slice::<MetadataExchangeRequest>(&body) else {
     return Err(ApiError::MinumumProtocolVersion);
   };
-  let version = if req.supported_versions.contains(&3) {
+  let version = if req.supported_versions.contains(&4) {
+    4
+  } else if req.supported_versions.contains(&3) {
     3
   } else if req.supported_versions.contains(&2) {
     2
@@ -424,7 +433,10 @@ async fn authentication_middleware(
   else {
     return Err(ApiError::InvalidProtocolVersion);
   };
-  if protocol_version != "2" && protocol_version != "3" {
+  if protocol_version != "2"
+    && protocol_version != "3"
+    && protocol_version != "4"
+  {
     return Err(ApiError::InvalidProtocolVersion);
   }
   let Some(authorization) = req
@@ -517,6 +529,141 @@ async fn watch_endpoint(
     .headers_mut()
     .insert("content-type", "application/octet-stream".parse().unwrap());
   Ok(res)
+}
+
+/// Maximum number of keys that may be watched concurrently on one watch
+/// channel. Exceeding it closes the channel with close code 1008.
+const WATCH_CHANNEL_MAX_KEYS: usize = 1024;
+
+async fn watch_channel_endpoint(
+  State(state): State<AppState>,
+  headers: HeaderMap,
+  ws: WebSocketUpgrade,
+) -> Result<impl IntoResponse, ApiError> {
+  // Watch channels exist since protocol version 4; the shared
+  // authentication middleware also accepts versions 2 and 3.
+  if headers
+    .get("x-denokv-version")
+    .and_then(|v| v.to_str().ok())
+    != Some("4")
+  {
+    return Err(ApiError::InvalidProtocolVersion);
+  }
+  Ok(ws.on_upgrade(move |socket| async move {
+    watch_channel_connection(socket, state).await;
+  }))
+}
+
+async fn watch_channel_connection(socket: WebSocket, state: AppState) {
+  use futures::FutureExt;
+  use futures::SinkExt;
+
+  let (mut ws_tx, mut ws_rx) = socket.split();
+
+  // The channel state machine tracks what the client has been told per
+  // key; the sqlite watcher is rebuilt whenever the key set grows, and its
+  // initial output (everything marked changed) is diffed by the state
+  // machine so the client only receives what it does not already know.
+  type SendWatchStream = std::pin::Pin<
+    Box<
+      dyn futures::Stream<
+          Item = Result<Vec<WatchKeyOutput>, deno_error::JsErrorBox>,
+        > + Send,
+    >,
+  >;
+  let mut channel = denokv_proto::watch_channel_server::WatchChannelServer::new(
+    WATCH_CHANNEL_MAX_KEYS,
+  );
+  // The key list of the current watcher. Removals intentionally leave the
+  // watcher (and this list) untouched — outputs for removed keys are
+  // filtered out by the state machine — so it can lag the watched key set
+  // until the next add.
+  let mut watched_keys: Vec<Vec<u8>> = Vec::new();
+  let mut watcher: Option<SendWatchStream> = None;
+
+  let mut ping = tokio::time::interval(std::time::Duration::from_secs(5));
+  ping.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+  loop {
+    tokio::select! {
+      message = ws_rx.next() => {
+        let Some(Ok(message)) = message else {
+          return;
+        };
+        // Apply this message and any further immediately-available ones,
+        // so a burst of adds (e.g. a client registering all its keys on
+        // connect) triggers one watcher rebuild instead of one per key.
+        let mut keys_changed = false;
+        let mut message = Some(message);
+        loop {
+          let close_reason = match message.take().unwrap() {
+            WsMessage::Binary(bytes) => {
+              use denokv_proto::watch_channel_server::ClientMessageEffect;
+              match channel.apply_client_message(&bytes) {
+                ClientMessageEffect::KeysChanged => {
+                  keys_changed = true;
+                  None
+                }
+                ClientMessageEffect::None => None,
+                ClientMessageEffect::Reject(reason) => Some(reason),
+              }
+            }
+            WsMessage::Text(_) => Some("text messages are not allowed"),
+            WsMessage::Close(_) => return,
+            // Ping/pong are handled by the websocket implementation.
+            _ => None,
+          };
+          if let Some(reason) = close_reason {
+            let _ = ws_tx
+              .send(WsMessage::Close(Some(CloseFrame {
+                code: 1008,
+                reason: reason.into(),
+              })))
+              .await;
+            return;
+          }
+          match ws_rx.next().now_or_never() {
+            Some(Some(Ok(next))) => message = Some(next),
+            Some(Some(Err(_))) | Some(None) => return,
+            None => break,
+          }
+        }
+        if keys_changed {
+          watched_keys = channel.watched_keys();
+          watcher = Some(state.sqlite.watch(watched_keys.clone()));
+        }
+      }
+      outputs = async { watcher.as_mut().unwrap().next().await }, if watcher.is_some() => {
+        let outputs = match outputs {
+          Some(Ok(outputs)) => outputs,
+          // Watcher error or database closing.
+          Some(Err(_)) | None => return,
+        };
+        let states = watched_keys.iter().zip(outputs).filter_map(
+          |(key, output)| match output {
+            WatchKeyOutput::Changed { entry } => {
+              Some((key.clone(), entry.map(pb::KvEntry::from)))
+            }
+            WatchKeyOutput::Unchanged => None,
+          },
+        );
+        if let Some(message) = channel.diff(states) {
+          if ws_tx
+            .send(WsMessage::Binary(message.into()))
+            .await
+            .is_err()
+          {
+            return;
+          }
+        }
+      }
+      _ = ping.tick() => {
+        if ws_tx.send(WsMessage::Ping(Vec::new().into())).await.is_err() {
+          return;
+        }
+      }
+    }
+  }
 }
 
 #[debug_handler]

@@ -3,9 +3,10 @@
 mod codec;
 mod convert;
 mod interface;
-mod limits;
+pub mod limits;
 mod protobuf;
 pub mod time;
+pub mod watch_channel_server;
 pub use crate::codec::decode_key;
 pub use crate::codec::encode_key;
 pub use crate::convert::ConvertError;

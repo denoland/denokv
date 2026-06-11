@@ -600,7 +600,7 @@ async fn watch_channel_connection(socket: WebSocket, state: AppState) {
             WsMessage::Binary(bytes) => {
               use denokv_proto::watch_channel_server::ClientMessageEffect;
               match channel.apply_client_message(&bytes) {
-                ClientMessageEffect::KeysChanged => {
+                ClientMessageEffect::KeyAdded(_) => {
                   keys_changed = true;
                   None
                 }

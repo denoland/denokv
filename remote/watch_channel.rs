@@ -313,6 +313,10 @@ enum ConnectionEnd {
   Shutdown,
   /// The connection was lost; reconnect.
   Reconnect,
+  /// The server violated the protocol; reconnect, but always count it as a
+  /// failure so a repeating poison frame cannot loop without backoff (the
+  /// connection may have been long-lived before the bad frame arrived).
+  ProtocolError,
   /// There is nothing (left) to watch, or the failure was already
   /// reported via fail_all; wait for new subscriptions.
   Idle,
@@ -361,6 +365,9 @@ impl<T: RemoteTransport> Driver<T> {
           } else {
             consecutive_failures += 1;
           }
+        }
+        ConnectionEnd::ProtocolError => {
+          consecutive_failures += 1;
         }
       }
     }
@@ -550,6 +557,9 @@ impl<T: RemoteTransport> Driver<T> {
               match self.handle_server_message(&bytes) {
                 ServerMessageOutcome::Continue => {}
                 ServerMessageOutcome::Reconnect => return ConnectionEnd::Reconnect,
+                ServerMessageOutcome::ProtocolError => {
+                  return ConnectionEnd::ProtocolError
+                }
               }
             }
             Some(Err(error)) => {
@@ -606,11 +616,11 @@ impl<T: RemoteTransport> Driver<T> {
       Ok(message) => message,
       Err(error) => {
         // A malformed frame is a server bug, but baselines are intact, so
-        // a reconnect is lossless. If the server keeps sending garbage the
-        // connections die young and the failure counter eventually
-        // declares the channel unavailable.
+        // a reconnect is lossless. Counted as a failure regardless of
+        // connection age so persistent garbage eventually declares the
+        // channel unavailable.
         debug!("KV Connect watch channel sent an invalid message: {error}");
-        return ServerMessageOutcome::Reconnect;
+        return ServerMessageOutcome::ProtocolError;
       }
     };
     let Some(pb::watch_channel_server_message::Message::Output(output)) =
@@ -683,4 +693,5 @@ impl<T: RemoteTransport> Driver<T> {
 enum ServerMessageOutcome {
   Continue,
   Reconnect,
+  ProtocolError,
 }

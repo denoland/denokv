@@ -31,8 +31,9 @@ enum KnownState {
 /// The effect of one client message on the channel.
 #[derive(Debug, PartialEq)]
 pub enum ClientMessageEffect {
-  /// The watched key set changed; the backend watcher must be updated.
-  KeysChanged,
+  /// A key was added (or re-added); the backend watcher must be updated
+  /// and the key's current state must be (re-)evaluated.
+  KeyAdded(Vec<u8>),
   /// No change to the watched key set.
   None,
   /// The message violates the protocol; the connection must be closed
@@ -52,7 +53,9 @@ impl WatchChannelServer {
     Self {
       known: BTreeMap::new(),
       max_keys,
-      max_key_size: crate::limits::MAX_READ_KEY_SIZE_BYTES,
+      // Watchable keys are writable keys; this also keeps successor-key
+      // range reads (key + 0x00) within MAX_READ_KEY_SIZE_BYTES.
+      max_key_size: crate::limits::MAX_WRITE_KEY_SIZE_BYTES,
     }
   }
 
@@ -80,8 +83,8 @@ impl WatchChannelServer {
           }
           _ => KnownState::Unknown,
         };
-        self.known.insert(add.key, baseline);
-        ClientMessageEffect::KeysChanged
+        self.known.insert(add.key.clone(), baseline);
+        ClientMessageEffect::KeyAdded(add.key)
       }
       Some(pb::watch_channel_client_message::Message::Remove(remove)) => {
         // The key set shrank, but the backend watcher does not need to be
@@ -211,7 +214,7 @@ mod tests {
     let mut server = WatchChannelServer::new(16);
     assert_eq!(
       server.apply_client_message(&add(b"a", None)),
-      ClientMessageEffect::KeysChanged
+      ClientMessageEffect::KeyAdded(b"a".to_vec())
     );
     // Present key.
     let message = server
@@ -307,9 +310,9 @@ mod tests {
     // Re-adding an existing key is not a cap violation.
     assert_eq!(
       server.apply_client_message(&add(b"a", None)),
-      ClientMessageEffect::KeysChanged
+      ClientMessageEffect::KeyAdded(b"a".to_vec())
     );
-    let huge = vec![0u8; crate::limits::MAX_READ_KEY_SIZE_BYTES + 1];
+    let huge = vec![0u8; crate::limits::MAX_WRITE_KEY_SIZE_BYTES + 1];
     assert_eq!(
       server.apply_client_message(&add(&huge, None)),
       ClientMessageEffect::Reject("key too large")

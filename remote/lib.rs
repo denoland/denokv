@@ -372,6 +372,147 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
       tokio::time::timeout(FORCED_REFRESH_WAIT, metadata_rx.changed()).await;
   }
 
+  /// The shared implementation behind [`Database::watch`] and
+  /// [`Remote::watch`]. The returned opaque stream is `Send` exactly when
+  /// `P` and `T` are (auto-trait leakage), which the public wrappers rely
+  /// on.
+  fn watch_stream(
+    &self,
+    keys: Vec<Vec<u8>>,
+  ) -> impl Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>> + use<P, T>
+  {
+    let this = self.clone();
+    let stream = try_stream! {
+      // Protocol version 4 multiplexes all watches for this database over
+      // one WebSocket channel; older versions open one streaming request
+      // per watch call. The channel is only used when it can mirror the
+      // version 3 behavior exactly: when the channel turns out to be
+      // unusable (e.g. an intermediary blocks WebSockets), the code falls
+      // through to the per-watch streaming path below.
+      let mut use_channel = this.client.supports_watch_channel()
+        && keys.len() <= denokv_proto::limits::MAX_WATCHED_KEYS;
+      if use_channel {
+        let metadata = this.wait_metadata().await?;
+        use_channel = metadata.version == ProtocolVersion::V4;
+        if use_channel && keys.is_empty() {
+          // Version 3 answers an empty watch with one empty initial
+          // snapshot and then nothing but keepalives; mirror that without
+          // occupying the channel.
+          yield Vec::new();
+          std::future::pending::<()>().await;
+        }
+        if use_channel {
+          // Permission checks happen here, against the endpoints in the
+          // current metadata; the channel driver records them and refuses
+          // endpoints that were never checked (it cannot check itself
+          // because permissions are not required to be thread safe).
+          let manager = this.watch_channel_manager();
+          let mut approved = Vec::with_capacity(metadata.endpoints.len());
+          for endpoint in &metadata.endpoints {
+            let url = Url::parse(&format!("{}/watch_channel", endpoint.url))
+              .map_err(|e| JsErrorBox::generic(e.to_string()))?;
+            this
+              .permissions
+              .check_net_url(&url)
+              .map_err(CallRawError::Permission)
+              .map_err(JsErrorBox::from_err)?;
+            approved.push(url.to_string());
+          }
+          manager.approve_endpoints(approved);
+
+          let subscription = manager.subscribe(keys.clone());
+          let mut subscription = pin!(subscription);
+          let mut fall_back = false;
+          while let Some(outputs) = subscription.next().await {
+            match outputs {
+              Ok(outputs) => yield outputs,
+              Err(error)
+                if error
+                  .to_string()
+                  .starts_with(watch_channel::CHANNEL_UNAVAILABLE_PREFIX) =>
+              {
+                warn!(
+                  "KV Connect falling back to per-watch streaming: {error}"
+                );
+                fall_back = true;
+                break;
+              }
+              Err(error) => {
+                Err(error)?;
+              }
+            }
+          }
+          if !fall_back {
+            // The manager (and the database) was dropped.
+            return;
+          }
+        }
+      }
+
+      let mut attempt = 0;
+       loop {
+        attempt += 1;
+        let req = pb::Watch {
+          keys: keys.iter().map(|key| pb::WatchKey { key: key.clone() }).collect(),
+        };
+
+        let (stream, _) = this.call_stream("watch", req).await?;
+        let stream = pin!(stream);
+        let reader = StreamReader::new(stream);
+        let codec = LengthDelimitedCodec::builder()
+          .little_endian()
+          .length_field_length(4)
+          .max_frame_length(16 * 1048576)
+          .new_codec();
+
+        let mut frames = tokio_util::codec::FramedRead::new(reader, codec);
+        'decode: loop {
+          let res = frames.next().await;
+          let frame = match res {
+            Some(Ok(frame)) if frame.is_empty() => continue, // ping, ignore
+            Some(Ok(frame)) => frame,
+            Some(Err(err)) => {
+              debug!("KV Connect watch disconnected (attempt={}): {}", attempt, err);
+              break 'decode;
+            }
+            None => {
+              break 'decode;
+            }
+          };
+
+          let data = pb::WatchOutput::decode(frame).map_err(|e: prost::DecodeError| JsErrorBox::from_err(WatchError::Decode(e)))?;
+          match data.status() {
+            pb::SnapshotReadStatus::SrSuccess => {}
+            pb::SnapshotReadStatus::SrReadDisabled => {
+              // TODO: this should result in a retry after a forced metadata refresh.
+              Err(JsErrorBox::from_err(WatchError::ReadsDisabled))?;
+              unreachable!();
+            }
+            pb::SnapshotReadStatus::SrUnspecified => {
+              Err(JsErrorBox::from_err(WatchError::UnspecifiedRead(data.status)))?;
+              unreachable!();
+            }
+          }
+
+          let mut outputs = Vec::new();
+          for key in data.keys {
+            if !key.changed {
+              outputs.push(WatchKeyOutput::Unchanged);
+            } else {
+              outputs
+                .push(watch_channel::convert_entry(key.entry_if_changed.as_ref())?);
+            }
+          }
+          yield outputs;
+        }
+
+        // The stream disconnected, so retry after a short delay.
+        randomized_exponential_backoff(DATAPATH_BACKOFF_BASE, attempt).await;
+      }
+    };
+    stream
+  }
+
   async fn call_raw<Req: prost::Message>(
     &self,
     method: &'static str,
@@ -530,6 +671,19 @@ impl<P: RemotePermissions, T: RemoteTransport> Remote<P, T> {
     let resp = Resp::decode(resp_body).map_err(CallDataError::Decode)?;
 
     Ok((resp, version))
+  }
+}
+
+impl<P: RemotePermissions + Send + Sync, T: RemoteTransport> Remote<P, T> {
+  /// Watch keys for changes. Identical to [`Database::watch`], but the
+  /// returned stream is `Send`. (The `Database` trait's stream type is not
+  /// `Send`, for the benefit of single-threaded embedders.)
+  pub fn watch(
+    &self,
+    keys: Vec<Vec<u8>>,
+  ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>> + Send>>
+  {
+    Box::pin(self.watch_stream(keys))
   }
 }
 
@@ -1041,136 +1195,7 @@ impl<P: RemotePermissions, T: RemoteTransport> Database for Remote<P, T> {
     &self,
     keys: Vec<Vec<u8>>,
   ) -> Pin<Box<dyn Stream<Item = Result<Vec<WatchKeyOutput>, JsErrorBox>>>> {
-    let this = self.clone();
-    let stream = try_stream! {
-      // Protocol version 4 multiplexes all watches for this database over
-      // one WebSocket channel; older versions open one streaming request
-      // per watch call. The channel is only used when it can mirror the
-      // version 3 behavior exactly: when the channel turns out to be
-      // unusable (e.g. an intermediary blocks WebSockets), the code falls
-      // through to the per-watch streaming path below.
-      let mut use_channel = this.client.supports_watch_channel()
-        && keys.len() <= denokv_proto::limits::MAX_WATCHED_KEYS;
-      if use_channel {
-        let metadata = this.wait_metadata().await?;
-        use_channel = metadata.version == ProtocolVersion::V4;
-        if use_channel && keys.is_empty() {
-          // Version 3 answers an empty watch with one empty initial
-          // snapshot and then nothing but keepalives; mirror that without
-          // occupying the channel.
-          yield Vec::new();
-          std::future::pending::<()>().await;
-        }
-        if use_channel {
-          // Permission checks happen here, against the endpoints in the
-          // current metadata; the channel driver records them and refuses
-          // endpoints that were never checked (it cannot check itself
-          // because permissions are not required to be thread safe).
-          let manager = this.watch_channel_manager();
-          let mut approved = Vec::with_capacity(metadata.endpoints.len());
-          for endpoint in &metadata.endpoints {
-            let url = Url::parse(&format!("{}/watch_channel", endpoint.url))
-              .map_err(|e| JsErrorBox::generic(e.to_string()))?;
-            this
-              .permissions
-              .check_net_url(&url)
-              .map_err(CallRawError::Permission)
-              .map_err(JsErrorBox::from_err)?;
-            approved.push(url.to_string());
-          }
-          manager.approve_endpoints(approved);
-
-          let subscription = manager.subscribe(keys.clone());
-          let mut subscription = pin!(subscription);
-          let mut fall_back = false;
-          while let Some(outputs) = subscription.next().await {
-            match outputs {
-              Ok(outputs) => yield outputs,
-              Err(error)
-                if error
-                  .to_string()
-                  .starts_with(watch_channel::CHANNEL_UNAVAILABLE_PREFIX) =>
-              {
-                warn!(
-                  "KV Connect falling back to per-watch streaming: {error}"
-                );
-                fall_back = true;
-                break;
-              }
-              Err(error) => {
-                Err(error)?;
-              }
-            }
-          }
-          if !fall_back {
-            // The manager (and the database) was dropped.
-            return;
-          }
-        }
-      }
-
-      let mut attempt = 0;
-       loop {
-        attempt += 1;
-        let req = pb::Watch {
-          keys: keys.iter().map(|key| pb::WatchKey { key: key.clone() }).collect(),
-        };
-
-        let (stream, _) = this.call_stream("watch", req).await?;
-        let stream = pin!(stream);
-        let reader = StreamReader::new(stream);
-        let codec = LengthDelimitedCodec::builder()
-          .little_endian()
-          .length_field_length(4)
-          .max_frame_length(16 * 1048576)
-          .new_codec();
-
-        let mut frames = tokio_util::codec::FramedRead::new(reader, codec);
-        'decode: loop {
-          let res = frames.next().await;
-          let frame = match res {
-            Some(Ok(frame)) if frame.is_empty() => continue, // ping, ignore
-            Some(Ok(frame)) => frame,
-            Some(Err(err)) => {
-              debug!("KV Connect watch disconnected (attempt={}): {}", attempt, err);
-              break 'decode;
-            }
-            None => {
-              break 'decode;
-            }
-          };
-
-          let data = pb::WatchOutput::decode(frame).map_err(|e: prost::DecodeError| JsErrorBox::from_err(WatchError::Decode(e)))?;
-          match data.status() {
-            pb::SnapshotReadStatus::SrSuccess => {}
-            pb::SnapshotReadStatus::SrReadDisabled => {
-              // TODO: this should result in a retry after a forced metadata refresh.
-              Err(JsErrorBox::from_err(WatchError::ReadsDisabled))?;
-              unreachable!();
-            }
-            pb::SnapshotReadStatus::SrUnspecified => {
-              Err(JsErrorBox::from_err(WatchError::UnspecifiedRead(data.status)))?;
-              unreachable!();
-            }
-          }
-
-          let mut outputs = Vec::new();
-          for key in data.keys {
-            if !key.changed {
-              outputs.push(WatchKeyOutput::Unchanged);
-            } else {
-              outputs
-                .push(watch_channel::convert_entry(key.entry_if_changed.as_ref())?);
-            }
-          }
-          yield outputs;
-        }
-
-        // The stream disconnected, so retry after a short delay.
-        randomized_exponential_backoff(DATAPATH_BACKOFF_BASE, attempt).await;
-      }
-    };
-    Box::pin(stream)
+    Box::pin(self.watch_stream(keys))
   }
 
   fn close(&self) {}

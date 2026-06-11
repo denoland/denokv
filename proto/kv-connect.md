@@ -497,6 +497,115 @@ Content-Type: application/octet-stream
 <u32 little endian><protobuf message><u32 little endian><protobuf message>...
 ```
 
+#### Watch Channel (version 4)
+
+A _Watch Channel_ is a long lived WebSocket connection that multiplexes
+watches for many keys over a single connection. Keys can be added to and
+removed from the channel at any time during its lifetime, without opening a
+new connection per watched key set. Servers and clients that negotiated
+protocol version 4 or later during the metadata exchange can use watch
+channels; the _Watch Request_ described above remains available for
+compatibility with older clients and servers.
+
+Like a _Watch Request_, a _Watch Channel_ is always eventually consistent, so
+it MUST be opened against an endpoint that has a `consistency` property that
+is either equal to `strong` or `eventual`.
+
+The client opens a _Watch Channel_ by performing a WebSocket handshake against
+the `<endpointUrl>/watch_channel` endpoint, where `<endpointUrl>` is the
+resolved URL of the selected endpoint with the `http` scheme replaced by `ws`,
+or the `https` scheme replaced by `wss`. The handshake request MUST include
+the same `Authorization`, `x-denokv-version`, and `x-denokv-database-id`
+headers as other _Data Path Protocol_ requests. If authentication fails, the
+server MUST reject the handshake with a 4xx class HTTP status response.
+
+All messages exchanged over the channel are binary WebSocket messages
+containing a single Protobuf encoded message; there is no length prefix, as
+WebSocket message framing already delimits messages. Text messages MUST NOT be
+sent; a peer receiving a text message MUST close the connection.
+
+Each client to server message is in the format
+`com.deno.kv.datapath.WatchChannelClientMessage`. It either adds a key to the
+channel (`add`) or removes one (`remove`):
+
+- `add` starts watching a key. The optional `baseline` describes what the
+  client already knows about the key: the versionstamp of the value it has
+  last seen, or the fact that it has last seen the key as not present. The
+  server MUST send the key's current state if it differs from the baseline,
+  and MUST NOT send it if it matches. When no baseline is given, the server
+  MUST always send the key's current state. Adding a key that is already
+  watched on the channel is permitted and replaces the baseline, re-evaluating
+  it as above; this can be used to fetch the current state of an
+  already-watched key.
+- `remove` stops watching a key. Removing a key that is not watched on the
+  channel has no effect. After the server processes a `remove`, it stops
+  sending updates for that key, but updates already in flight may still be
+  delivered.
+
+Each server to client message is in the format
+`com.deno.kv.datapath.WatchChannelServerMessage`. The `output` message carries
+the new state of one or more watched keys. Unlike `WatchOutput`, only keys
+whose state changed (relative to the baseline, or to the previously delivered
+state) are included; for each such key the message contains the key's current
+value, or no value if the key is not present. The server MAY collapse multiple
+changes to the same key into a single notification, as long as each message
+represents a consistent snapshot of the included keys. Deliveries are
+at-least-once: the server MAY send a state the client has already seen, and
+the client MUST treat each delivery as the key's current state.
+
+The client MUST read the `status` field of each `output` message and verify
+that it is set to `SR_SUCCESS`. If the `status` field is set to
+`SR_READ_DISABLED`, the client SHOULD perform a metadata exchange with the
+server to get a new list of endpoints, and then reconnect. If the `status`
+field is set to any other value, the client MUST fatally abort the channel and
+display an error message to the user.
+
+The server SHOULD send WebSocket Ping frames periodically to keep the
+connection alive and detect dead peers; the client MUST respond with Pong
+frames as required by the WebSocket protocol.
+
+The server MAY enforce a limit on the number of keys concurrently watched on
+one channel. If a client exceeds this limit, the server MUST close the
+connection with WebSocket close code 1008 (policy violation) and a human
+readable reason.
+
+The server MUST NOT retain any watch channel state beyond the lifetime of
+the WebSocket connection: when the connection closes, for any reason, all
+keys watched on it are forgotten. Re-establishment after a disconnect is
+entirely the client's responsibility, and the baseline mechanism makes it
+cheap: if the channel is closed due to a network error, a server restart, or
+an intermediary terminating the connection, the client SHOULD reconnect
+using an exponential backoff strategy and re-add all watched keys, supplying
+the last seen state of each key as the baseline. A server processes such an
+add exactly like any other; baselines merely prevent re-delivery of state
+the client already has. If the channel repeatedly cannot be
+established — for example because an intermediary does not support WebSocket
+upgrades — the client MAY fall back to _Watch Requests_, which remain
+available on servers that support version 4. This makes reconnects lossless and
+free of duplicate deliveries: changes that occurred while disconnected are
+delivered because they differ from the baseline, and unchanged keys are not
+re-delivered.
+
+Example:
+
+```http
+GET /v4/watch_channel HTTP/1.1
+Connection: Upgrade
+Upgrade: websocket
+Sec-WebSocket-Key: <key>
+Sec-WebSocket-Version: 13
+Authorization: Bearer <token>
+x-denokv-version: 4
+x-denokv-database-id: a1b2c3d4-e5f6-7g8h-9i1j-2k3l4m5n6o7p
+```
+
+```http
+HTTP/1.1 101 Switching Protocols
+Connection: Upgrade
+Upgrade: websocket
+Sec-WebSocket-Accept: <accept>
+```
+
 ## Protocol Versions
 
 The KV Connect protocol is versioned. The version of the protocol is negotiated
@@ -542,3 +651,12 @@ Version 3 adds the following features:
 - The `status` field is added to the response body of _Snapshot Read Requests_
   and is used instead of the `read_disabled` boolean field by the client.
 - The "Watch" data path operation is added.
+
+### Version 4
+
+Version 4 adds the following features:
+
+- The "Watch Channel" data path operation is added: a WebSocket endpoint that
+  multiplexes watches for many keys over a single connection, with support for
+  resuming after reconnects without duplicate deliveries. The metadata
+  exchange response format is unchanged from version 3.

@@ -80,6 +80,91 @@ impl RemoteResponse for ReqwestResponse {
   }
 }
 
+/// Like [`ReqwestClient`], but capable of opening WebSocket connections, so
+/// it negotiates protocol version 4 and watches go through the multiplexed
+/// watch channel.
+#[derive(Clone)]
+struct WsReqwestClient(reqwest::Client);
+
+impl RemoteTransport for WsReqwestClient {
+  type Response = ReqwestResponse;
+  async fn post(
+    &self,
+    url: Url,
+    headers: http::HeaderMap,
+    body: Bytes,
+  ) -> Result<(Url, http::StatusCode, Self::Response), JsErrorBox> {
+    ReqwestClient(self.0.clone()).post(url, headers, body).await
+  }
+
+  fn supports_watch_channel(&self) -> bool {
+    true
+  }
+
+  async fn websocket(
+    &self,
+    url: Url,
+    headers: http::HeaderMap,
+  ) -> Result<
+    (
+      denokv_remote::WebSocketMessageSink,
+      denokv_remote::WebSocketMessageStream,
+    ),
+    JsErrorBox,
+  > {
+    use futures::SinkExt;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let mut request = url
+      .as_str()
+      .into_client_request()
+      .map_err(|e| JsErrorBox::generic(e.to_string()))?;
+    for (name, value) in headers.iter() {
+      request.headers_mut().insert(name.clone(), value.clone());
+    }
+    let (socket, _response) =
+      tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(|e| JsErrorBox::generic(e.to_string()))?;
+    let (sink, stream) = futures::StreamExt::split(socket);
+    let sink = Box::pin(
+      sink
+        .with(|bytes: Bytes| async move {
+          Ok::<_, tokio_tungstenite::tungstenite::Error>(Message::Binary(bytes))
+        })
+        .sink_map_err(|e: tokio_tungstenite::tungstenite::Error| {
+          JsErrorBox::generic(e.to_string())
+        }),
+    );
+    let stream =
+      Box::pin(futures::stream::unfold(stream, |mut stream| async move {
+        loop {
+          match stream.next().await {
+            Some(Ok(Message::Binary(bytes))) => {
+              return Some((Ok(bytes), stream))
+            }
+            // Control frames are handled by tungstenite.
+            Some(Ok(Message::Ping(_)))
+            | Some(Ok(Message::Pong(_)))
+            | Some(Ok(Message::Frame(_))) => continue,
+            Some(Ok(Message::Text(_))) => {
+              return Some((
+                Err(JsErrorBox::generic("unexpected text message")),
+                stream,
+              ))
+            }
+            Some(Ok(Message::Close(_))) | None => return None,
+            Some(Err(e)) => {
+              return Some((Err(JsErrorBox::generic(e.to_string())), stream))
+            }
+          }
+        }
+      }));
+    Ok((sink, stream))
+  }
+}
+
 fn denokv_exe() -> PathBuf {
   let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   path.push("../target");
@@ -289,6 +374,235 @@ async fn watch() {
     panic!("Unexpected watch result");
   };
   assert_eq!(entry.key, vec![1]);
+}
+
+async fn set_key<P: RemotePermissions, T: RemoteTransport>(
+  remote: &denokv_remote::Remote<P, T>,
+  key: Vec<u8>,
+  value: u64,
+) {
+  remote
+    .atomic_write(AtomicWrite {
+      checks: vec![],
+      mutations: vec![denokv_proto::Mutation {
+        key,
+        kind: denokv_proto::MutationKind::Set(KvValue::U64(value)),
+        expire_at: None,
+      }],
+      enqueues: vec![],
+    })
+    .await
+    .unwrap()
+    .expect("commit success");
+}
+
+#[tokio::test]
+async fn watch_channel() {
+  let (_child, addr) = start_server().await;
+  let client = WsReqwestClient(reqwest::Client::new());
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
+
+  let metadata_endpoint = denokv_remote::MetadataEndpoint {
+    url,
+    access_token: ACCESS_TOKEN.to_string(),
+  };
+
+  let remote =
+    denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
+
+  set_key(&remote, vec![1], 42).await;
+
+  let mut watch = remote.watch(vec![vec![1], vec![2]]);
+
+  // The first item is a full snapshot: key 1 has a value, key 2 does not.
+  let first = tokio::time::timeout(Duration::from_secs(30), watch.next())
+    .await
+    .expect("no timeout")
+    .unwrap()
+    .expect("watch success");
+  assert_eq!(first.len(), 2);
+  let WatchKeyOutput::Changed { entry: Some(entry) } = &first[0] else {
+    panic!("expected key 1 to have a value: {first:?}");
+  };
+  assert_eq!(entry.key, vec![1]);
+  assert!(matches!(&first[1], WatchKeyOutput::Changed { entry: None }));
+
+  // A write to one key produces an update marking only that key changed.
+  set_key(&remote, vec![2], 1).await;
+  let second = tokio::time::timeout(Duration::from_secs(30), watch.next())
+    .await
+    .expect("no timeout")
+    .unwrap()
+    .expect("watch success");
+  assert!(matches!(&second[0], WatchKeyOutput::Unchanged));
+  let WatchKeyOutput::Changed { entry: Some(entry) } = &second[1] else {
+    panic!("expected key 2 to have a value: {second:?}");
+  };
+  assert_eq!(entry.key, vec![2]);
+
+  // A second watch shares the same channel and gets its own initial
+  // snapshot, while the first watch keeps working.
+  let mut watch2 = remote.watch(vec![vec![1]]);
+  let first2 = tokio::time::timeout(Duration::from_secs(30), watch2.next())
+    .await
+    .expect("no timeout")
+    .unwrap()
+    .expect("watch success");
+  assert_eq!(first2.len(), 1);
+  assert!(matches!(
+    &first2[0],
+    WatchKeyOutput::Changed { entry: Some(_) }
+  ));
+
+  set_key(&remote, vec![1], 43).await;
+  for (name, watch) in [("watch1", &mut watch), ("watch2", &mut watch2)] {
+    loop {
+      let outputs = tokio::time::timeout(Duration::from_secs(30), watch.next())
+        .await
+        .unwrap_or_else(|_| panic!("{name} timed out"))
+        .unwrap()
+        .expect("watch success");
+      // The re-add for watch2's subscription may produce a redundant
+      // update for key 1; skip until the write is observed.
+      if let Some(WatchKeyOutput::Changed { entry: Some(entry) }) =
+        outputs.first()
+      {
+        if matches!(entry.value, KvValue::U64(43)) {
+          break;
+        }
+      }
+    }
+  }
+}
+
+/// A transport that claims WebSocket support but whose connections always
+/// fail — as seen through proxies that strip the Upgrade header.
+#[derive(Clone)]
+struct BrokenWsClient(reqwest::Client);
+
+impl RemoteTransport for BrokenWsClient {
+  type Response = ReqwestResponse;
+  async fn post(
+    &self,
+    url: Url,
+    headers: http::HeaderMap,
+    body: Bytes,
+  ) -> Result<(Url, http::StatusCode, Self::Response), JsErrorBox> {
+    ReqwestClient(self.0.clone()).post(url, headers, body).await
+  }
+
+  fn supports_watch_channel(&self) -> bool {
+    true
+  }
+
+  async fn websocket(
+    &self,
+    _url: Url,
+    _headers: http::HeaderMap,
+  ) -> Result<
+    (
+      denokv_remote::WebSocketMessageSink,
+      denokv_remote::WebSocketMessageStream,
+    ),
+    JsErrorBox,
+  > {
+    Err(JsErrorBox::generic("upgrade blocked"))
+  }
+}
+
+#[tokio::test]
+async fn watch_channel_falls_back_when_ws_unavailable() {
+  let (_child, addr) = start_server().await;
+  let client = BrokenWsClient(reqwest::Client::new());
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
+
+  let metadata_endpoint = denokv_remote::MetadataEndpoint {
+    url,
+    access_token: ACCESS_TOKEN.to_string(),
+  };
+
+  let remote =
+    denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
+
+  set_key(&remote, vec![7], 7).await;
+
+  // The server negotiates v4, every websocket attempt fails, and the watch
+  // must still deliver via the per-watch streaming fallback.
+  let mut watch = remote.watch(vec![vec![7]]);
+  let first = tokio::time::timeout(Duration::from_secs(30), watch.next())
+    .await
+    .expect("no timeout")
+    .unwrap()
+    .expect("watch success");
+  let WatchKeyOutput::Changed { entry: Some(entry) } = &first[0] else {
+    panic!("expected key 7 to have a value: {first:?}");
+  };
+  assert_eq!(entry.key, vec![7]);
+}
+
+#[tokio::test]
+async fn watch_channel_empty_keys_yields_initial_snapshot() {
+  let (_child, addr) = start_server().await;
+  let client = WsReqwestClient(reqwest::Client::new());
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
+
+  let metadata_endpoint = denokv_remote::MetadataEndpoint {
+    url,
+    access_token: ACCESS_TOKEN.to_string(),
+  };
+
+  let remote =
+    denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
+
+  let mut watch = remote.watch(vec![]);
+  let first = tokio::time::timeout(Duration::from_secs(30), watch.next())
+    .await
+    .expect("no timeout")
+    .unwrap()
+    .expect("watch success");
+  assert!(first.is_empty());
+}
+
+#[tokio::test]
+async fn watch_channel_resumes_across_subscriptions() {
+  let (_child, addr) = start_server().await;
+  let client = WsReqwestClient(reqwest::Client::new());
+  let url = format!("http://localhost:{}", addr.port()).parse().unwrap();
+
+  let metadata_endpoint = denokv_remote::MetadataEndpoint {
+    url,
+    access_token: ACCESS_TOKEN.to_string(),
+  };
+
+  let remote =
+    denokv_remote::Remote::new(client, DummyPermissions, metadata_endpoint);
+
+  // Open and fully drain a first watch, then drop it.
+  set_key(&remote, vec![9], 1).await;
+  {
+    let mut watch = remote.watch(vec![vec![9]]);
+    let first = tokio::time::timeout(Duration::from_secs(30), watch.next())
+      .await
+      .expect("no timeout")
+      .unwrap()
+      .expect("watch success");
+    assert!(matches!(
+      &first[0],
+      WatchKeyOutput::Changed { entry: Some(_) }
+    ));
+  }
+
+  // A new watch for the same key must again receive the current state.
+  let mut watch = remote.watch(vec![vec![9]]);
+  let first = tokio::time::timeout(Duration::from_secs(30), watch.next())
+    .await
+    .expect("no timeout")
+    .unwrap()
+    .expect("watch success");
+  let WatchKeyOutput::Changed { entry: Some(entry) } = &first[0] else {
+    panic!("expected key 9 to have a value: {first:?}");
+  };
+  assert!(matches!(entry.value, KvValue::U64(1)));
 }
 
 #[tokio::test]

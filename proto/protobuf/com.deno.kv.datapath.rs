@@ -209,6 +209,99 @@ pub struct WatchKeyOutput {
   #[prost(message, optional, tag = "2")]
   pub entry_if_changed: ::core::option::Option<KvEntry>,
 }
+/// A message sent by the client over a watch channel (protocol version 4).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WatchChannelClientMessage {
+  #[prost(oneof = "watch_channel_client_message::Message", tags = "1, 2")]
+  pub message: ::core::option::Option<watch_channel_client_message::Message>,
+}
+/// Nested message and enum types in `WatchChannelClientMessage`.
+pub mod watch_channel_client_message {
+  #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+  pub enum Message {
+    /// Start watching a key on this channel.
+    #[prost(message, tag = "1")]
+    Add(super::WatchChannelAdd),
+    /// Stop watching a key on this channel.
+    #[prost(message, tag = "2")]
+    Remove(super::WatchChannelRemove),
+  }
+}
+/// Starts watching a key on a watch channel. Adding a key that is already
+/// watched on the channel is allowed: the server replaces the baseline and
+/// re-evaluates it, so a re-add with a stale baseline causes the current
+/// state to be sent once more.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WatchChannelAdd {
+  /// The key to watch.
+  #[prost(bytes = "vec", tag = "1")]
+  pub key: ::prost::alloc::vec::Vec<u8>,
+  /// What the client already knows about the key. The server only sends the
+  /// key's current state if it differs from this baseline. When no baseline
+  /// is set the server always sends the current state.
+  #[prost(oneof = "watch_channel_add::Baseline", tags = "2, 3")]
+  pub baseline: ::core::option::Option<watch_channel_add::Baseline>,
+}
+/// Nested message and enum types in `WatchChannelAdd`.
+pub mod watch_channel_add {
+  /// What the client already knows about the key. The server only sends the
+  /// key's current state if it differs from this baseline. When no baseline
+  /// is set the server always sends the current state.
+  #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+  pub enum Baseline {
+    /// The versionstamp of the value the client has last seen.
+    #[prost(bytes, tag = "2")]
+    Versionstamp(::prost::alloc::vec::Vec<u8>),
+    /// Set to true if the client has last seen the key as not present.
+    #[prost(bool, tag = "3")]
+    Absent(bool),
+  }
+}
+/// Stops watching a key on a watch channel.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WatchChannelRemove {
+  /// The key to stop watching.
+  #[prost(bytes = "vec", tag = "1")]
+  pub key: ::prost::alloc::vec::Vec<u8>,
+}
+/// A message sent by the server over a watch channel (protocol version 4).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WatchChannelServerMessage {
+  #[prost(oneof = "watch_channel_server_message::Message", tags = "1")]
+  pub message: ::core::option::Option<watch_channel_server_message::Message>,
+}
+/// Nested message and enum types in `WatchChannelServerMessage`.
+pub mod watch_channel_server_message {
+  #[derive(Clone, PartialEq, ::prost::Oneof)]
+  pub enum Message {
+    /// Updates for one or more watched keys.
+    #[prost(message, tag = "1")]
+    Output(super::WatchChannelOutput),
+  }
+}
+/// Updates for watched keys on a watch channel. Unlike WatchOutput, this
+/// message only contains keys whose state differs from what the client is
+/// known to have seen; unchanged keys are not included.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WatchChannelOutput {
+  /// The status of the watch channel.
+  #[prost(enumeration = "SnapshotReadStatus", tag = "1")]
+  pub status: i32,
+  /// The keys that changed.
+  #[prost(message, repeated, tag = "2")]
+  pub keys: ::prost::alloc::vec::Vec<WatchChannelKeyOutput>,
+}
+/// The new state of a single watched key on a watch channel.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WatchChannelKeyOutput {
+  /// The key that changed.
+  #[prost(bytes = "vec", tag = "1")]
+  pub key: ::prost::alloc::vec::Vec<u8>,
+  /// The key's current value. Not set if the key is not present (it was
+  /// deleted or never existed).
+  #[prost(message, optional, tag = "2")]
+  pub entry: ::core::option::Option<KvEntry>,
+}
 /// The status of a read request.
 #[derive(
   Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration,

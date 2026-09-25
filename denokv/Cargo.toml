@@ -44,6 +44,7 @@ deno_error.workspace = true
 
 [dev-dependencies]
 bytes.workspace = true
+tokio-tungstenite = "0.29"
 denokv_remote.workspace = true
 http.workspace = true
 num-bigint.workspace = true

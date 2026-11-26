@@ -2,7 +2,8 @@
 
 import { assertEquals } from "https://deno.land/std@0.208.0/assert/assert_equals.ts";
 import { assertThrows } from "https://deno.land/std@0.208.0/assert/assert_throws.ts";
-import { checkListSelector } from "./kv_util.ts";
+import { FakeTime } from "https://deno.land/std@0.208.0/testing/time.ts";
+import { checkListSelector, Expirer } from "./kv_util.ts";
 
 Deno.test({
   name: "checkListSelector ignores selector keys with undefined values",
@@ -90,5 +91,46 @@ Deno.test({
     }
     assertEquals(entries, [["users", "a"]]);
     kv.close();
+  },
+});
+
+const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+
+Deno.test({
+  name: "Expirer does not run early when expiry is more than 2^31-1 ms away",
+  fn: async () => {
+    let calls = 0;
+    const expires = Date.now() + THIRTY_DAYS;
+    const expirer = new Expirer(false, () => {
+      calls++;
+      return expires;
+    });
+    expirer.init(expires);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expirer.finalize();
+    assertEquals(calls, 0);
+  },
+});
+
+Deno.test({
+  name: "Expirer runs once a far-away expiry is reached",
+  fn: () => {
+    const time = new FakeTime();
+    try {
+      let calls = 0;
+      const expires = Date.now() + THIRTY_DAYS;
+      const expirer = new Expirer(false, () => {
+        calls++;
+        return undefined;
+      });
+      expirer.init(expires);
+      time.tick(THIRTY_DAYS - 1);
+      assertEquals(calls, 0);
+      time.tick(1);
+      assertEquals(calls, 1);
+      expirer.finalize();
+    } finally {
+      time.restore();
+    }
   },
 });

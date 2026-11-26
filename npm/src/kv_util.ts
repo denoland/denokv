@@ -458,6 +458,9 @@ export abstract class BaseKv implements Kv {
   }
 }
 
+// largest delay setTimeout accepts; larger values fire after 1 ms
+const MAX_TIMEOUT_DELAY = 2 ** 31 - 1;
+
 export class Expirer {
   private readonly debug: boolean;
   private readonly expireFn: () => number | undefined;
@@ -482,7 +485,7 @@ export class Expirer {
     clearTimeout(expirerTimeout);
     const delay = expires - Date.now();
     if (debug) console.log(`rescheduleExpirer: run in ${delay}ms`);
-    this.expirerTimeout = setTimeout(() => this.runExpirer(), delay);
+    this.startTimer(expires);
   }
 
   finalize() {
@@ -490,6 +493,18 @@ export class Expirer {
   }
 
   //
+
+  private startTimer(expires: number) {
+    const delay = expires - Date.now();
+    if (delay > MAX_TIMEOUT_DELAY) {
+      this.expirerTimeout = setTimeout(
+        () => this.startTimer(expires),
+        MAX_TIMEOUT_DELAY,
+      );
+    } else {
+      this.expirerTimeout = setTimeout(() => this.runExpirer(), delay);
+    }
+  }
 
   private runExpirer() {
     const { expireFn } = this;
